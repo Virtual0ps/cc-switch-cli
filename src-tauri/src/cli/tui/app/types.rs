@@ -88,10 +88,6 @@ pub enum TextSubmit {
     ConfigExport,
     ConfigImport,
     ConfigBackupName,
-    PromptCreateName,
-    PromptRename {
-        id: String,
-    },
     SettingsProxyListenAddress,
     SettingsProxyListenPort,
     SettingsOpenClawConfigDir,

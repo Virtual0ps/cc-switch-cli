@@ -25,17 +25,27 @@ pub(super) fn deactivate(ctx: &mut RuntimeActionContext<'_>, id: String) -> Resu
     Ok(())
 }
 
-pub(super) fn rename(
+pub(super) fn update_metadata(
     ctx: &mut RuntimeActionContext<'_>,
-    id: String,
+    old_id: String,
+    new_id: String,
     name: String,
+    description: Option<String>,
 ) -> Result<(), AppError> {
     let state = load_state()?;
-    PromptService::rename_prompt(&state, ctx.app.app_type.clone(), &id, &name)?;
+    let prompt = PromptService::update_prompt_metadata(
+        &state,
+        ctx.app.app_type.clone(),
+        &old_id,
+        &new_id,
+        &name,
+        description,
+    )?;
+    ctx.app.form = None;
     ctx.app
         .push_toast(texts::tui_toast_prompt_renamed(), ToastKind::Success);
     *ctx.data = UiData::load(&ctx.app.app_type)?;
-    select_prompt_by_id(ctx.app, ctx.data, &id);
+    select_prompt_by_id(ctx.app, ctx.data, &prompt.id);
     Ok(())
 }
 

@@ -1140,19 +1140,19 @@ impl App {
         self.form = Some(FormState::McpAdd(McpAddFormState::from_server(&row.server)));
     }
 
-    pub(crate) fn open_prompt_create_name_input(&mut self) {
+    pub(crate) fn open_prompt_create_form(&mut self, data: &UiData) {
         self.filter.active = false;
         self.editor = None;
-        self.overlay = Overlay::TextInput(TextInputState {
-            title: texts::tui_prompt_create_title().to_string(),
-            prompt: texts::tui_prompt_create_prompt().to_string(),
-            input: TextInput::new(format!(
-                "Prompt {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M")
-            )),
-            submit: TextSubmit::PromptCreateName,
-            secret: false,
-        });
+        self.overlay = Overlay::None;
+        let name = format!("Prompt {}", chrono::Local::now().format("%Y-%m-%d %H:%M"));
+        let existing_ids = data
+            .prompts
+            .rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>();
+        let id = crate::services::PromptService::generate_prompt_id(&name, &existing_ids);
+        self.form = Some(FormState::PromptMeta(PromptMetaFormState::new(id, name)));
         self.focus = Focus::Content;
     }
 }

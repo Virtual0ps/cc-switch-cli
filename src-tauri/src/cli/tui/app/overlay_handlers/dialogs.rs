@@ -150,42 +150,6 @@ impl App {
                 }
                 Action::ConfigExport { path: raw }
             }
-            TextSubmit::PromptCreateName => {
-                let trimmed = raw.trim().to_string();
-                if trimmed.is_empty() {
-                    self.push_toast(texts::tui_toast_prompt_name_empty(), ToastKind::Warning);
-                    self.overlay = Overlay::TextInput(TextInputState {
-                        title: texts::tui_prompt_create_title().to_string(),
-                        prompt: texts::tui_prompt_create_prompt().to_string(),
-                        input: TextInput::new(raw),
-                        submit: TextSubmit::PromptCreateName,
-                        secret: false,
-                    });
-                    return Action::None;
-                }
-                self.open_editor(
-                    texts::tui_prompt_title(&trimmed),
-                    EditorKind::Plain,
-                    "# Write your prompt here\n",
-                    EditorSubmit::PromptCreate { name: trimmed },
-                );
-                Action::None
-            }
-            TextSubmit::PromptRename { id } => {
-                let trimmed = raw.trim().to_string();
-                if trimmed.is_empty() {
-                    self.push_toast(texts::tui_toast_prompt_name_empty(), ToastKind::Warning);
-                    self.overlay = Overlay::TextInput(TextInputState {
-                        title: texts::tui_prompt_rename_title().to_string(),
-                        prompt: texts::tui_prompt_rename_prompt().to_string(),
-                        input: TextInput::new(raw),
-                        submit: TextSubmit::PromptRename { id },
-                        secret: false,
-                    });
-                    return Action::None;
-                }
-                Action::PromptRename { id, name: trimmed }
-            }
             TextSubmit::ConfigImport => {
                 if raw.is_empty() {
                     self.push_toast(texts::tui_toast_import_path_empty(), ToastKind::Warning);

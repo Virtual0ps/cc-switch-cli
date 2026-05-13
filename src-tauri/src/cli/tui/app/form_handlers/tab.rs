@@ -84,6 +84,9 @@ impl App {
                     (FormMode::Edit { .. }, FormFocus::Templates) => FormFocus::Fields,
                 };
             }
+            FormState::PromptMeta(prompt) => {
+                prompt.focus = FormFocus::Fields;
+            }
         }
 
         true

@@ -331,10 +331,9 @@ impl App {
         let visible = visible_prompts(&self.filter, data);
         match key.code {
             KeyCode::Char('a') => {
-                self.open_prompt_create_name_input();
+                self.open_prompt_create_form(data);
                 Action::None
             }
-            KeyCode::Char('r') => Action::ReloadData,
             KeyCode::Up => {
                 self.prompt_idx = self.prompt_idx.saturating_sub(1);
                 Action::None
@@ -410,13 +409,12 @@ impl App {
                 let Some(row) = visible.get(self.prompt_idx) else {
                     return Action::None;
                 };
-                self.overlay = Overlay::TextInput(TextInputState {
-                    title: texts::tui_prompt_rename_title().to_string(),
-                    prompt: texts::tui_prompt_rename_prompt().to_string(),
-                    input: TextInput::new(row.prompt.name.clone()),
-                    submit: TextSubmit::PromptRename { id: row.id.clone() },
-                    secret: false,
-                });
+                self.filter.active = false;
+                self.editor = None;
+                self.overlay = Overlay::None;
+                self.form = Some(FormState::PromptMeta(PromptMetaFormState::from_prompt(
+                    &row.prompt,
+                )));
                 Action::None
             }
             _ => Action::None,

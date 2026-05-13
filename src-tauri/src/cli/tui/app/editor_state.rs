@@ -8,19 +8,35 @@ pub enum EditorKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditorSubmit {
-    PromptCreate { name: String },
-    PromptEdit { id: String },
+    PromptCreate {
+        id: String,
+        name: String,
+        description: Option<String>,
+    },
+    PromptEdit {
+        id: String,
+    },
     ProviderFormApplyJson,
     ProviderFormApplyOpenClawModels,
     ProviderFormApplyCodexAuth,
     ProviderFormApplyCodexConfigToml,
     ProviderAdd,
-    ProviderEdit { id: String },
+    ProviderEdit {
+        id: String,
+    },
     McpAdd,
-    McpEdit { id: String },
-    ConfigCommonSnippet { app_type: AppType },
-    OpenClawWorkspaceFile { filename: String },
-    OpenClawDailyMemoryFile { filename: String },
+    McpEdit {
+        id: String,
+    },
+    ConfigCommonSnippet {
+        app_type: AppType,
+    },
+    OpenClawWorkspaceFile {
+        filename: String,
+    },
+    OpenClawDailyMemoryFile {
+        filename: String,
+    },
     ConfigOpenClawEnv,
     ConfigOpenClawTools,
     ConfigOpenClawAgents,

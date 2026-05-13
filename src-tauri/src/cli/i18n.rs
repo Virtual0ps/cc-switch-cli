@@ -4623,6 +4623,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_label_prompt_metadata() -> &'static str {
+        if is_chinese() {
+            "提示词元信息"
+        } else {
+            "Prompt Metadata"
+        }
+    }
+
     pub fn tui_toast_prompt_no_active_to_deactivate() -> &'static str {
         if is_chinese() {
             "没有可停用的活动提示词。"

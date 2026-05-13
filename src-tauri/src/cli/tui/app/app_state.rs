@@ -110,9 +110,11 @@ pub enum Action {
     PromptDeactivate {
         id: String,
     },
-    PromptRename {
-        id: String,
+    PromptUpdateMetadata {
+        old_id: String,
+        new_id: String,
         name: String,
+        description: Option<String>,
     },
     PromptDelete {
         id: String,

@@ -17,6 +17,24 @@ fn get_unix_timestamp() -> Result<i64, AppError> {
 pub struct PromptService;
 
 impl PromptService {
+    pub fn validate_prompt_id(id: &str) -> Result<(), AppError> {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::InvalidInput("提示词 ID 不能为空".to_string()));
+        }
+
+        if !trimmed
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(AppError::InvalidInput(
+                "提示词 ID 只能包含字母、数字、点、下划线和连字符".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn generate_prompt_id(name: &str, existing_ids: &[String]) -> String {
         let mut base_id = name
             .trim()
@@ -64,6 +82,7 @@ impl PromptService {
         _id: &str,
         prompt: Prompt,
     ) -> Result<(), AppError> {
+        Self::validate_prompt_id(&prompt.id)?;
         let is_enabled = prompt.enabled;
 
         state.db.save_prompt(app.as_str(), &prompt)?;
@@ -95,26 +114,71 @@ impl PromptService {
         id: &str,
         name: &str,
     ) -> Result<(), AppError> {
+        let prompts = state.db.get_prompts(app.as_str())?;
+        let Some(existing) = prompts.get(id) else {
+            return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
+        };
+        Self::update_prompt_metadata(state, app, id, id, name, existing.description.clone())?;
+        Ok(())
+    }
+
+    pub fn update_prompt_metadata(
+        state: &AppState,
+        app: AppType,
+        old_id: &str,
+        new_id: &str,
+        name: &str,
+        description: Option<String>,
+    ) -> Result<Prompt, AppError> {
+        let new_id = new_id.trim();
+        Self::validate_prompt_id(new_id)?;
+
         let trimmed = name.trim();
         if trimmed.is_empty() {
             return Err(AppError::InvalidInput("提示词名称不能为空".to_string()));
         }
 
-        let mut prompts = state.db.get_prompts(app.as_str())?;
-        let Some(prompt) = prompts.get_mut(id) else {
-            return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
+        let prompts = state.db.get_prompts(app.as_str())?;
+        if old_id != new_id && prompts.contains_key(new_id) {
+            return Err(AppError::InvalidInput(format!("提示词 ID {new_id} 已存在")));
+        }
+
+        let Some(existing) = prompts.get(old_id) else {
+            return Err(AppError::InvalidInput(format!("提示词 {old_id} 不存在")));
         };
 
+        let mut prompt = existing.clone();
+        let old_prompt_id = prompt.id.clone();
+        prompt.id = new_id.to_string();
         prompt.name = trimmed.to_string();
+        prompt.description = description.and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
         prompt.updated_at = Some(get_unix_timestamp()?);
-        state.db.save_prompt(app.as_str(), prompt)?;
-        Ok(())
+        state.db.save_prompt(app.as_str(), &prompt)?;
+        if old_prompt_id != prompt.id {
+            state.db.delete_prompt(app.as_str(), &old_prompt_id)?;
+        }
+
+        Ok(prompt)
     }
 
     pub fn create_prompt(
         state: &AppState,
         app: AppType,
         name: &str,
+        content: &str,
+    ) -> Result<Prompt, AppError> {
+        Self::create_prompt_with_id(state, app, None, name, None, content)
+    }
+
+    pub fn create_prompt_with_id(
+        state: &AppState,
+        app: AppType,
+        id: Option<&str>,
+        name: &str,
+        description: Option<&str>,
         content: &str,
     ) -> Result<Prompt, AppError> {
         let trimmed_name = name.trim();
@@ -125,11 +189,13 @@ impl PromptService {
         let existing_ids = Self::get_prompts(state, app.clone())?
             .into_keys()
             .collect::<Vec<_>>();
-        let id = Self::generate_prompt_id(trimmed_name, &existing_ids);
-        if id.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "无法根据提示词名称生成有效 ID".to_string(),
-            ));
+        let id = match id {
+            Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+            _ => Self::generate_prompt_id(trimmed_name, &existing_ids),
+        };
+        Self::validate_prompt_id(&id)?;
+        if existing_ids.contains(&id) {
+            return Err(AppError::InvalidInput(format!("提示词 ID {id} 已存在")));
         }
 
         let timestamp = get_unix_timestamp()?;
@@ -137,7 +203,10 @@ impl PromptService {
             id: id.clone(),
             name: trimmed_name.to_string(),
             content: content.trim_end().to_string(),
-            description: None,
+            description: description.and_then(|value| {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }),
             enabled: false,
             created_at: Some(timestamp),
             updated_at: Some(timestamp),
@@ -505,5 +574,110 @@ mod tests {
             prompt.id.starts_with("backup-") && prompt.content == "manual live" && !prompt.enabled
         }));
         assert!(prompts.get("target").expect("target prompt").enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn create_prompt_with_custom_id_and_description() {
+        let _home = TempHome::new();
+        let state = state_with_config(MultiAppConfig::default());
+
+        let created = PromptService::create_prompt_with_id(
+            &state,
+            AppType::Claude,
+            Some("custom.prompt"),
+            "Custom Prompt",
+            Some("  Custom description  "),
+            "hello\n",
+        )
+        .expect("create custom prompt");
+
+        assert_eq!(created.id, "custom.prompt");
+        assert_eq!(created.name, "Custom Prompt");
+        assert_eq!(created.description.as_deref(), Some("Custom description"));
+
+        let prompts = PromptService::get_prompts(&state, AppType::Claude).expect("load prompts");
+        let stored = prompts.get("custom.prompt").expect("stored prompt");
+        assert_eq!(stored.content, "hello");
+        assert_eq!(stored.description.as_deref(), Some("Custom description"));
+    }
+
+    #[test]
+    #[serial]
+    fn update_prompt_metadata_changes_id_and_preserves_content_and_enabled() {
+        let _home = TempHome::new();
+        let state = state_with_config(MultiAppConfig::default());
+
+        PromptService::upsert_prompt(
+            &state,
+            AppType::Claude,
+            "old-id",
+            Prompt {
+                id: "old-id".to_string(),
+                name: "Old".to_string(),
+                content: "body".to_string(),
+                description: Some("old description".to_string()),
+                enabled: true,
+                created_at: Some(1),
+                updated_at: Some(1),
+            },
+        )
+        .expect("seed prompt");
+
+        let updated = PromptService::update_prompt_metadata(
+            &state,
+            AppType::Claude,
+            "old-id",
+            "new-id",
+            "New Name",
+            Some("  new description  ".to_string()),
+        )
+        .expect("update metadata");
+
+        assert_eq!(updated.id, "new-id");
+        assert_eq!(updated.name, "New Name");
+        assert_eq!(updated.content, "body");
+        assert!(updated.enabled);
+        assert_eq!(updated.description.as_deref(), Some("new description"));
+
+        let prompts = PromptService::get_prompts(&state, AppType::Claude).expect("load prompts");
+        assert!(!prompts.contains_key("old-id"));
+        let stored = prompts.get("new-id").expect("new prompt id");
+        assert_eq!(stored.content, "body");
+        assert!(stored.enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn update_prompt_metadata_rejects_id_conflict() {
+        let _home = TempHome::new();
+        let state = state_with_config(MultiAppConfig::default());
+
+        PromptService::upsert_prompt(
+            &state,
+            AppType::Claude,
+            "first",
+            prompt("first", "one", false),
+        )
+        .expect("seed first prompt");
+        PromptService::upsert_prompt(
+            &state,
+            AppType::Claude,
+            "second",
+            prompt("second", "two", false),
+        )
+        .expect("seed second prompt");
+
+        let err = PromptService::update_prompt_metadata(
+            &state,
+            AppType::Claude,
+            "first",
+            "second",
+            "First",
+            None,
+        )
+        .expect_err("duplicate id should fail");
+
+        assert!(err.to_string().contains("已存在"));
     }
 }

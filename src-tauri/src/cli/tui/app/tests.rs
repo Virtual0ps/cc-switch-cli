@@ -901,7 +901,9 @@ mod tests {
             EditorKind::Plain,
             "first line\nalpha beta",
             EditorSubmit::PromptCreate {
+                id: "demo".to_string(),
                 name: "Demo".to_string(),
+                description: None,
             },
         );
         if let Some(editor) = app.editor.as_mut() {
@@ -7983,7 +7985,7 @@ mod tests {
     }
 
     #[test]
-    fn prompts_a_opens_create_name_input() {
+    fn prompts_a_opens_create_metadata_form() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Prompts;
         app.focus = Focus::Content;
@@ -7991,73 +7993,58 @@ mod tests {
         let action = app.on_key(key(KeyCode::Char('a')), &UiData::default());
         assert!(matches!(action, Action::None));
         assert!(matches!(
-            app.overlay,
-            Overlay::TextInput(TextInputState {
-                submit: TextSubmit::PromptCreateName,
-                ..
-            })
+            app.form,
+            Some(FormState::PromptMeta(ref form))
+                if matches!(form.mode, FormMode::Add)
+                    && form.name.value.starts_with("Prompt ")
+                    && form.id.value.starts_with("prompt-")
         ));
     }
 
     #[test]
-    fn prompts_r_requests_reload() {
+    fn prompts_create_metadata_submit_opens_editor() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Prompts;
         app.focus = Focus::Content;
 
-        let action = app.on_key(key(KeyCode::Char('r')), &UiData::default());
-        assert!(matches!(action, Action::ReloadData));
-    }
+        app.form = Some(FormState::PromptMeta(PromptMetaFormState::new(
+            "prompt-one".to_string(),
+            "Prompt One".to_string(),
+        )));
+        if let Some(FormState::PromptMeta(form)) = app.form.as_mut() {
+            form.description.set("Demo description");
+        }
 
-    #[test]
-    fn prompts_create_name_submit_opens_editor() {
-        let mut app = App::new(Some(AppType::Claude));
-        app.route = Route::Prompts;
-        app.focus = Focus::Content;
-
-        app.overlay = Overlay::TextInput(TextInputState {
-            title: texts::tui_prompt_create_title().to_string(),
-            prompt: texts::tui_prompt_create_prompt().to_string(),
-            input: TextInput::new("Prompt One".to_string()),
-            submit: TextSubmit::PromptCreateName,
-            secret: false,
-        });
-
-        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &UiData::default());
         assert!(matches!(action, Action::None));
         assert!(matches!(
             app.editor.as_ref().map(|editor| editor.submit.clone()),
-            Some(EditorSubmit::PromptCreate { name }) if name == "Prompt One"
+            Some(EditorSubmit::PromptCreate { id, name, description })
+                if id == "prompt-one"
+                    && name == "Prompt One"
+                    && description.as_deref() == Some("Demo description")
         ));
     }
 
     #[test]
-    fn prompts_create_name_empty_keeps_input_open() {
+    fn prompts_create_metadata_empty_name_keeps_form_open() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Prompts;
         app.focus = Focus::Content;
 
-        app.overlay = Overlay::TextInput(TextInputState {
-            title: texts::tui_prompt_create_title().to_string(),
-            prompt: texts::tui_prompt_create_prompt().to_string(),
-            input: TextInput::new("   ".to_string()),
-            submit: TextSubmit::PromptCreateName,
-            secret: false,
-        });
+        app.form = Some(FormState::PromptMeta(PromptMetaFormState::new(
+            "prompt-one".to_string(),
+            "   ".to_string(),
+        )));
 
-        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &UiData::default());
         assert!(matches!(action, Action::None));
-        assert!(matches!(
-            app.overlay,
-            Overlay::TextInput(TextInputState {
-                submit: TextSubmit::PromptCreateName,
-                ..
-            })
-        ));
+        assert!(matches!(app.form, Some(FormState::PromptMeta(_))));
+        assert!(app.editor.is_none());
     }
 
     #[test]
-    fn prompts_n_opens_rename_input() {
+    fn prompts_n_opens_metadata_form() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Prompts;
         app.focus = Focus::Content;
@@ -8069,7 +8056,7 @@ mod tests {
                 id: "pr1".to_string(),
                 name: "Demo".to_string(),
                 content: "hello".to_string(),
-                description: None,
+                description: Some("Demo description".to_string()),
                 enabled: false,
                 created_at: None,
                 updated_at: None,
@@ -8079,62 +8066,73 @@ mod tests {
         let action = app.on_key(key(KeyCode::Char('n')), &data);
         assert!(matches!(action, Action::None));
         assert!(matches!(
-            app.overlay,
-            Overlay::TextInput(TextInputState {
-                submit: TextSubmit::PromptRename { ref id },
-                ref input,
-                ..
-            }) if id == "pr1" && input.value == "Demo"
+            app.form,
+            Some(FormState::PromptMeta(ref form))
+                if matches!(form.mode, FormMode::Edit { ref id } if id == "pr1")
+                    && form.id.value == "pr1"
+                    && form.name.value == "Demo"
+                    && form.description.value == "Demo description"
         ));
     }
 
     #[test]
-    fn prompts_rename_empty_keeps_input_open() {
+    fn prompts_metadata_empty_name_keeps_form_open() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Prompts;
         app.focus = Focus::Content;
 
-        app.overlay = Overlay::TextInput(TextInputState {
-            title: texts::tui_prompt_rename_title().to_string(),
-            prompt: texts::tui_prompt_rename_prompt().to_string(),
-            input: TextInput::new("   ".to_string()),
-            submit: TextSubmit::PromptRename {
-                id: "pr1".to_string(),
-            },
-            secret: false,
-        });
+        let prompt = Prompt {
+            id: "pr1".to_string(),
+            name: "Demo".to_string(),
+            content: "hello".to_string(),
+            description: None,
+            enabled: false,
+            created_at: None,
+            updated_at: None,
+        };
+        let mut form = PromptMetaFormState::from_prompt(&prompt);
+        form.name.set("   ");
+        app.form = Some(FormState::PromptMeta(form));
 
-        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &UiData::default());
         assert!(matches!(action, Action::None));
-        assert!(matches!(
-            app.overlay,
-            Overlay::TextInput(TextInputState {
-                submit: TextSubmit::PromptRename { ref id },
-                ..
-            }) if id == "pr1"
-        ));
+        assert!(matches!(app.form, Some(FormState::PromptMeta(_))));
+        assert!(app.editor.is_none());
     }
 
     #[test]
-    fn prompts_rename_submit_returns_action() {
+    fn prompts_metadata_submit_returns_action() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Prompts;
         app.focus = Focus::Content;
 
-        app.overlay = Overlay::TextInput(TextInputState {
-            title: texts::tui_prompt_rename_title().to_string(),
-            prompt: texts::tui_prompt_rename_prompt().to_string(),
-            input: TextInput::new("Renamed".to_string()),
-            submit: TextSubmit::PromptRename {
-                id: "pr1".to_string(),
-            },
-            secret: false,
-        });
+        let prompt = Prompt {
+            id: "pr1".to_string(),
+            name: "Demo".to_string(),
+            content: "hello".to_string(),
+            description: None,
+            enabled: false,
+            created_at: None,
+            updated_at: None,
+        };
+        let mut form = PromptMetaFormState::from_prompt(&prompt);
+        form.id.set("renamed-id");
+        form.name.set("Renamed");
+        form.description.set("Updated description");
+        app.form = Some(FormState::PromptMeta(form));
 
-        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &UiData::default());
         assert!(matches!(
             action,
-            Action::PromptRename { id, name } if id == "pr1" && name == "Renamed"
+            Action::PromptUpdateMetadata {
+                old_id,
+                new_id,
+                name,
+                description
+            } if old_id == "pr1"
+                && new_id == "renamed-id"
+                && name == "Renamed"
+                && description.as_deref() == Some("Updated description")
         ));
     }
 
@@ -8157,7 +8155,9 @@ mod tests {
             &mut data,
             Action::EditorSubmit {
                 submit: EditorSubmit::PromptCreate {
+                    id: "prompt-one".to_string(),
                     name: "Prompt One".to_string(),
+                    description: None,
                 },
                 content: "body".to_string(),
             },
@@ -8204,9 +8204,11 @@ mod tests {
         run_runtime_action(
             &mut app,
             &mut data,
-            Action::PromptRename {
-                id: "pr1".to_string(),
+            Action::PromptUpdateMetadata {
+                old_id: "pr1".to_string(),
+                new_id: "pr1".to_string(),
                 name: "Renamed".to_string(),
+                description: None,
             },
         )
         .expect("rename prompt");
