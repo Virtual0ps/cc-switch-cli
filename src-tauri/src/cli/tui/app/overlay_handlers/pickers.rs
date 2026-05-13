@@ -767,10 +767,7 @@ impl App {
                     self.overlay = Overlay::None;
                     Action::None
                 }
-                KeyCode::Char('f') => Action::SetProxyAutoFailover {
-                    app_type: self.app_type.clone(),
-                    enabled: !data.proxy.auto_failover_enabled,
-                },
+                KeyCode::Char('f') => self.request_auto_failover_toggle(data),
                 _ => Action::None,
             });
         }
@@ -791,10 +788,7 @@ impl App {
                 *selected = (*selected + 1).min(rows.len() - 1);
                 Action::None
             }
-            KeyCode::Char('f') => Action::SetProxyAutoFailover {
-                app_type: self.app_type.clone(),
-                enabled: !data.proxy.auto_failover_enabled,
-            },
+            KeyCode::Char('f') => self.request_auto_failover_toggle(data),
             KeyCode::Char(' ') | KeyCode::Enter => Action::ProviderSetFailoverQueue {
                 id: selected_row.id.clone(),
                 enabled: !selected_row.provider.in_failover_queue,

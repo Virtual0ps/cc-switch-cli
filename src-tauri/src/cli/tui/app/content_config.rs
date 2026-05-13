@@ -756,6 +756,57 @@ impl App {
         }
     }
 
+    pub(crate) fn request_auto_failover_toggle(&mut self, data: &UiData) -> Action {
+        if !supports_failover_controls(&self.app_type) {
+            return Action::None;
+        }
+
+        let enabled = !data.proxy.auto_failover_enabled;
+        if !enabled {
+            return Action::SetProxyAutoFailover {
+                app_type: self.app_type.clone(),
+                enabled,
+            };
+        }
+
+        let queue_empty = !data
+            .providers
+            .rows
+            .iter()
+            .any(|row| row.provider.in_failover_queue);
+        if queue_empty {
+            self.push_toast(
+                crate::cli::failover_policy::auto_failover_queue_empty_message(),
+                ToastKind::Warning,
+            );
+            return Action::None;
+        }
+
+        if data
+            .proxy
+            .routes_current_app_through_proxy(&self.app_type)
+            .is_some_and(|active| !active)
+        {
+            self.overlay = Overlay::Confirm(ConfirmOverlay {
+                title: texts::tui_confirm_title().to_string(),
+                message: crate::t!(
+                    "Automatic failover requires proxy routing for this app. Enable proxy takeover for the app first?",
+                    "故障转移需要当前应用走代理才能生效。是否同时开启当前应用代理并启用故障转移？"
+                )
+                .to_string(),
+                action: ConfirmAction::ProxyEnableAndAutoFailover {
+                    app_type: self.app_type.clone(),
+                },
+            });
+            return Action::None;
+        }
+
+        Action::SetProxyAutoFailover {
+            app_type: self.app_type.clone(),
+            enabled,
+        }
+    }
+
     pub(crate) fn on_settings_proxy_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
         let items_len = LocalProxySettingsItem::ALL.len();
         match key.code {
@@ -769,13 +820,7 @@ impl App {
             }
             KeyCode::Enter => match LocalProxySettingsItem::ALL.get(self.settings_proxy_idx) {
                 Some(LocalProxySettingsItem::AutoFailover) => {
-                    if !supports_failover_controls(&self.app_type) {
-                        return Action::None;
-                    }
-                    Action::SetProxyAutoFailover {
-                        app_type: self.app_type.clone(),
-                        enabled: !data.proxy.auto_failover_enabled,
-                    }
+                    self.request_auto_failover_toggle(data)
                 }
                 Some(LocalProxySettingsItem::ListenAddress) => {
                     if data.proxy.running {

@@ -944,9 +944,9 @@ pub fn tui_key_deactivate_active() -> &'static str {
 
 pub fn tui_provider_list_keys() -> &'static str {
     if is_chinese() {
-        "按键：a=新增  e=编辑  Enter=详情  s=切换  /=搜索"
+        "按键：a=新增  e=编辑  Enter=详情  Space=切换  /=搜索"
     } else {
-        "Keys: a=add  e=edit  Enter=details  s=switch  /=filter"
+        "Keys: a=add  e=edit  Enter=details  Space=switch  /=filter"
     }
 }
 

@@ -705,6 +705,27 @@ fn header_renders_proxy_chip_left_of_provider() {
 }
 
 #[test]
+fn header_renders_failover_indicator_inside_proxy_chip() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Main;
+
+    let mut data = minimal_data(&app.app_type);
+    data.providers.rows[0].is_current = true;
+    data.proxy.running = true;
+    data.proxy.claude_takeover = true;
+    data.proxy.auto_failover_enabled = true;
+
+    let buf = render(&app, &data);
+    let header = line_at(&buf, 1);
+    let proxy_label = texts::tui_header_proxy_status_with_failover(true, true);
+
+    assert!(header.contains(&proxy_label), "{header}");
+}
+
+#[test]
 #[serial(home_settings)]
 fn header_hides_gemini_by_default() {
     let _lock = lock_env();
@@ -6867,14 +6888,7 @@ fn failover_provider_list_marks_queue_entries_when_enabled() {
         .find(|line| line.contains("Queued Provider") && line.contains("https://example.com"))
         .expect("queued provider row rendered");
 
-    assert!(
-        !current_line.contains(texts::tui_marker_active()),
-        "{current_line}"
-    );
-    assert!(
-        queued_line.contains(texts::tui_marker_active()),
-        "{queued_line}"
-    );
+    assert!(!current_line.contains("#"), "{current_line}");
     assert!(queued_line.contains("#1"), "{queued_line}");
 }
 
@@ -6963,7 +6977,6 @@ fn opencode_provider_list_key_bar_uses_config_membership_actions() {
     assert!(all.contains("t test"), "{all}");
     assert!(!all.contains("s add/remove"), "{all}");
     assert!(!all.contains("c stream check"), "{all}");
-    assert!(!all.contains("s switch"), "{all}");
     assert!(!all.contains("x set default"), "{all}");
 }
 

@@ -1,18 +1,7 @@
 use super::*;
 
 impl App {
-    fn provider_switch_action(&mut self, row: &super::data::ProviderRow, data: &UiData) -> Action {
-        if supports_failover_controls(&self.app_type) && data.proxy.auto_failover_enabled {
-            self.push_toast(
-                crate::t!(
-                    "Manage provider priority in the failover queue while automatic failover is enabled.",
-                    "自动故障转移开启时，请在故障转移队列中管理供应商优先级。"
-                ),
-                ToastKind::Info,
-            );
-            return Action::None;
-        }
-
+    fn provider_switch_action(&mut self, row: &super::data::ProviderRow) -> Action {
         if matches!(self.app_type, AppType::OpenCode) {
             if row.is_in_config {
                 return Action::ProviderRemoveFromConfig { id: row.id.clone() };
@@ -108,7 +97,7 @@ impl App {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
-                self.provider_switch_action(row, data)
+                self.provider_switch_action(row)
             }
             KeyCode::Char('x') => {
                 let Some(row) = visible.get(self.provider_idx) else {
@@ -219,7 +208,7 @@ impl App {
                 Action::None
             }
             KeyCode::Enter => Action::None,
-            KeyCode::Char('s') | KeyCode::Char(' ') => self.provider_switch_action(row, data),
+            KeyCode::Char('s') | KeyCode::Char(' ') => self.provider_switch_action(row),
             KeyCode::Char('x') => {
                 if !matches!(self.app_type, AppType::OpenClaw) {
                     return Action::None;

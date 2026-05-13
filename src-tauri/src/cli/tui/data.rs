@@ -1099,6 +1099,20 @@ mod tests {
         let _home = HomeGuard::set(temp.path());
 
         let state = load_state().expect("load state");
+        let provider = Provider::with_id(
+            "queued".to_string(),
+            "Queued".to_string(),
+            json!({"env": {"ANTHROPIC_BASE_URL": "https://queued.example"}}),
+            None,
+        );
+        state
+            .db
+            .save_provider("claude", &provider)
+            .expect("save queued provider");
+        state
+            .db
+            .add_to_failover_queue("claude", &provider.id)
+            .expect("queue provider");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1109,6 +1123,7 @@ mod tests {
                 .get_proxy_config_for_app("claude")
                 .await
                 .expect("read claude app proxy config");
+            config.enabled = true;
             config.auto_failover_enabled = true;
             state
                 .db

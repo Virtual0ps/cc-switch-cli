@@ -68,6 +68,7 @@ pub enum ConfirmAction {
     SettingsSetSkipClaudeOnboarding { enabled: bool },
     SettingsSetClaudePluginIntegration { enabled: bool },
     ProviderApiFormatProxyNotice,
+    ProxyEnableAndAutoFailover { app_type: AppType },
     OpenClawDailyMemoryDelete { filename: String },
     FormSaveBeforeClose,
     EditorDiscard,

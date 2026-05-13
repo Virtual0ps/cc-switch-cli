@@ -9828,7 +9828,7 @@ mod tests {
     }
 
     #[test]
-    fn providers_space_is_blocked_when_failover_enabled() {
+    fn providers_space_switches_provider_when_failover_enabled() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Providers;
         app.focus = Focus::Content;
@@ -9844,12 +9844,11 @@ mod tests {
         ));
 
         let action = app.on_key(key(KeyCode::Char(' ')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(matches!(app.toast.as_ref(), Some(toast) if toast.kind == ToastKind::Info));
+        assert!(matches!(action, Action::ProviderSwitch { id } if id == "p1"));
     }
 
     #[test]
-    fn providers_s_key_is_blocked_when_failover_enabled() {
+    fn providers_s_key_switches_provider_as_legacy_shortcut() {
         let mut app = App::new(Some(AppType::Codex));
         app.route = Route::Providers;
         app.focus = Focus::Content;
@@ -9865,8 +9864,7 @@ mod tests {
         ));
 
         let action = app.on_key(key(KeyCode::Char('s')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(matches!(app.toast.as_ref(), Some(toast) if toast.kind == ToastKind::Info));
+        assert!(matches!(action, Action::ProviderSwitch { id } if id == "p1"));
     }
 
     #[test]
@@ -9953,10 +9951,71 @@ mod tests {
         data.proxy.auto_failover_enabled = false;
 
         let action = app.on_key(key(KeyCode::Char('f')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.toast.as_ref(), Some(toast) if toast.kind == ToastKind::Warning));
+    }
+
+    #[test]
+    fn settings_proxy_auto_failover_prompts_to_enable_proxy_when_not_routed() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::SettingsProxy;
+        app.focus = Focus::Content;
+        app.settings_proxy_idx = LocalProxySettingsItem::ALL
+            .iter()
+            .position(|item| *item == LocalProxySettingsItem::AutoFailover)
+            .expect("auto failover item should exist");
+
+        let mut data = UiData::default();
+        data.proxy.running = true;
+        data.proxy.claude_takeover = false;
+        data.providers.rows.push(failover_provider_row(
+            "p1",
+            "Provider One",
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://example.com"}}),
+            true,
+            Some(0),
+        ));
+
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::Confirm(ConfirmOverlay {
+                action: ConfirmAction::ProxyEnableAndAutoFailover {
+                    app_type: AppType::Claude
+                },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn settings_proxy_auto_failover_toggles_when_proxy_is_routed_and_queue_exists() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::SettingsProxy;
+        app.focus = Focus::Content;
+        app.settings_proxy_idx = LocalProxySettingsItem::ALL
+            .iter()
+            .position(|item| *item == LocalProxySettingsItem::AutoFailover)
+            .expect("auto failover item should exist");
+
+        let mut data = UiData::default();
+        data.proxy.running = true;
+        data.proxy.claude_takeover = true;
+        data.proxy.auto_failover_enabled = false;
+        data.providers.rows.push(failover_provider_row(
+            "p1",
+            "Provider One",
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://example.com"}}),
+            true,
+            Some(0),
+        ));
+
+        let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(
             action,
             Action::SetProxyAutoFailover { app_type, enabled }
-                if app_type == AppType::Gemini && enabled
+                if app_type == AppType::Claude && enabled
         ));
     }
 
@@ -10131,7 +10190,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_proxy_auto_failover_toggles_while_proxy_running() {
+    fn settings_proxy_auto_failover_blocks_empty_queue() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::SettingsProxy;
         app.focus = Focus::Content;
@@ -10145,11 +10204,8 @@ mod tests {
         data.proxy.auto_failover_enabled = false;
 
         let action = app.on_key(key(KeyCode::Enter), &data);
-        assert!(matches!(
-            action,
-            Action::SetProxyAutoFailover { app_type, enabled }
-                if app_type == AppType::Claude && enabled
-        ));
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.toast.as_ref(), Some(toast) if toast.kind == ToastKind::Warning));
     }
 
     #[test]

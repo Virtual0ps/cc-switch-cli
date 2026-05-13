@@ -126,7 +126,10 @@ pub(super) fn render_header(
         .proxy
         .routes_current_app_through_proxy(&app.app_type)
         .map(|enabled| {
-            let text = texts::tui_header_proxy_status(enabled);
+            let text = texts::tui_header_proxy_status_with_failover(
+                enabled,
+                data.proxy.auto_failover_enabled,
+            );
             let style = if enabled {
                 selection_style(theme)
             } else if theme.no_color {

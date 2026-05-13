@@ -28,7 +28,7 @@ fn opencode_status_label(row: &ProviderRow) -> &'static str {
 fn failover_queue_label(data: &UiData, provider_id: &str) -> String {
     failover_queue_position(data, provider_id)
         .map(|position| format!("#{position}"))
-        .unwrap_or_else(|| "-".to_string())
+        .unwrap_or_default()
 }
 
 pub(super) fn provider_rows_filtered<'a>(app: &App, data: &'a UiData) -> Vec<&'a ProviderRow> {
@@ -185,65 +185,52 @@ pub(super) fn render_providers(
     }
 
     let failover_supported = crate::cli::tui::app::supports_failover_controls(&app.app_type);
-    let mut header_cells = vec![
+    let header_cells = vec![
         Cell::from(""),
         Cell::from(texts::header_name()),
         Cell::from(texts::tui_header_api_url()),
     ];
-    if failover_supported {
-        header_cells.push(Cell::from(crate::t!("Failover", "故障转移")));
-    }
     let header = Row::new(header_cells).style(header_style);
 
     let rows = visible.iter().enumerate().map(|(idx, row)| {
-        let marker = if matches!(app.app_type, crate::app_config::AppType::OpenClaw) {
+        let marker = if failover_supported && data.proxy.auto_failover_enabled {
+            failover_queue_label(data, &row.id)
+        } else if matches!(app.app_type, crate::app_config::AppType::OpenClaw) {
             if row.is_default_model {
-                "*"
+                "*".to_string()
             } else if row.is_in_config {
-                "+"
+                "+".to_string()
             } else {
-                ""
+                String::new()
             }
         } else if matches!(app.app_type, crate::app_config::AppType::OpenCode) {
             if row.is_in_config {
-                "+"
+                "+".to_string()
             } else {
-                ""
-            }
-        } else if failover_supported && data.proxy.auto_failover_enabled {
-            if row.provider.in_failover_queue {
-                texts::tui_marker_active()
-            } else {
-                texts::tui_marker_inactive()
+                String::new()
             }
         } else if row.is_current {
-            texts::tui_marker_active()
+            texts::tui_marker_active().to_string()
         } else {
-            texts::tui_marker_inactive()
+            texts::tui_marker_inactive().to_string()
         };
         let api = row.api_url.as_deref().unwrap_or(texts::tui_na());
         let show_quota = row.is_current || idx == app.provider_idx;
-        let mut cells = vec![
+        let cells = vec![
             Cell::from(marker),
             Cell::from(provider_name_with_quota_line(
                 app, data, row, show_quota, theme,
             )),
             Cell::from(api),
         ];
-        if failover_supported {
-            cells.push(Cell::from(failover_queue_label(data, &row.id)));
-        }
         Row::new(cells)
     });
 
-    let mut constraints = vec![
-        Constraint::Length(2),
+    let constraints = vec![
+        Constraint::Length(3),
         Constraint::Percentage(44),
         Constraint::Percentage(46),
     ];
-    if failover_supported {
-        constraints.push(Constraint::Length(10));
-    }
 
     let table = Table::new(rows, constraints)
         .header(header)

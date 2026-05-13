@@ -191,6 +191,9 @@ pub enum Action {
         app_type: AppType,
         enabled: bool,
     },
+    EnableProxyAndAutoFailover {
+        app_type: AppType,
+    },
     SetOpenClawConfigDir {
         path: Option<String>,
     },

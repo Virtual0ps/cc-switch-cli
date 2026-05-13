@@ -53,6 +53,11 @@ impl App {
                         Action::SetClaudePluginIntegration { enabled: *enabled }
                     }
                     ConfirmAction::ProviderApiFormatProxyNotice => Action::None,
+                    ConfirmAction::ProxyEnableAndAutoFailover { app_type } => {
+                        Action::EnableProxyAndAutoFailover {
+                            app_type: app_type.clone(),
+                        }
+                    }
                     ConfirmAction::OpenClawDailyMemoryDelete { filename } => {
                         Action::OpenClawDailyMemoryDelete {
                             filename: filename.clone(),

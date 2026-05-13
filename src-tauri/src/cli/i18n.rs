@@ -437,9 +437,9 @@ pub mod texts {
 
     pub fn tui_footer_global() -> &'static str {
         if is_chinese() {
-            "[ ] 切换应用  ←→ 切换菜单/内容  ↑↓ 移动  Enter 详情  s 切换  / 过滤  Esc 返回  ? 帮助"
+            "[ ] 切换应用  ←→ 切换菜单/内容  ↑↓ 移动  Enter 详情  Space 切换  / 过滤  Esc 返回  ? 帮助"
         } else {
-            "[ ] switch app  ←→ focus menu/content  ↑↓ move  Enter details  s switch  / filter  Esc back  ? help"
+            "[ ] switch app  ←→ focus menu/content  ↑↓ move  Enter details  Space switch  / filter  Esc back  ? help"
         }
     }
 
@@ -469,9 +469,9 @@ pub mod texts {
 
     pub fn tui_footer_action_keys() -> &'static str {
         if is_chinese() {
-            "[ ] 切换应用  Enter 详情  s 切换  / 过滤  Esc 返回  ? 帮助"
+            "[ ] 切换应用  Enter 详情  Space 切换  / 过滤  Esc 返回  ? 帮助"
         } else {
-            "[ ] switch app  Enter details  s switch  / filter  Esc back  ? help"
+            "[ ] switch app  Enter details  Space switch  / filter  Esc back  ? help"
         }
     }
 
@@ -717,6 +717,18 @@ pub mod texts {
         } else {
             format!("Proxy: {}", if enabled { "On" } else { "Off" })
         }
+    }
+
+    pub fn tui_header_proxy_status_with_failover(enabled: bool, failover_enabled: bool) -> String {
+        let mut text = tui_header_proxy_status(enabled);
+        if enabled && failover_enabled {
+            if is_chinese() {
+                text.push_str(" · 故障转移");
+            } else {
+                text.push_str(" · Failover");
+            }
+        }
+        text
     }
 
     pub fn tui_header_config_error() -> &'static str {
@@ -2692,9 +2704,9 @@ pub mod texts {
 
     pub fn tui_provider_list_keys() -> &'static str {
         if is_chinese() {
-            "按键：a=新增  e=编辑  Enter=详情  s=切换  /=搜索"
+            "按键：a=新增  e=编辑  Enter=详情  Space=切换  /=搜索"
         } else {
-            "Keys: a=add  e=edit  Enter=details  s=switch  /=filter"
+            "Keys: a=add  e=edit  Enter=details  Space=switch  /=filter"
         }
     }
 
@@ -8923,7 +8935,7 @@ mod tests {
         let help = texts::tui_help_text();
         assert!(help.contains("文本输入：Ctrl+A/E 行首/行尾"));
         assert!(help.contains("供应商：Enter 详情"));
-        assert!(help.contains("供应商详情：s 切换"));
+        assert!(help.contains("供应商详情：Space 切换"));
         assert!(help.contains("提示词：c 新建"));
         assert!(help.contains("技能：Enter 详情"));
         assert!(help.contains("配置：Enter 打开/执行"));

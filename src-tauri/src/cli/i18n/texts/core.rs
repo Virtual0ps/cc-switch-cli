@@ -299,9 +299,9 @@ pub fn tui_filter_title() -> &'static str {
 
 pub fn tui_footer_global() -> &'static str {
     if is_chinese() {
-        "[ ] 切换应用  ←→ 切换菜单/内容  ↑↓ 移动  Enter 详情  s 切换  / 过滤  Esc 返回  ? 帮助"
+        "[ ] 切换应用  ←→ 切换菜单/内容  ↑↓ 移动  Enter 详情  Space 切换  / 过滤  Esc 返回  ? 帮助"
     } else {
-        "[ ] switch app  ←→ focus menu/content  ↑↓ move  Enter details  s switch  / filter  Esc back  ? help"
+        "[ ] switch app  ←→ focus menu/content  ↑↓ move  Enter details  Space switch  / filter  Esc back  ? help"
     }
 }
 
@@ -331,9 +331,9 @@ pub fn tui_footer_nav_keys() -> &'static str {
 
 pub fn tui_footer_action_keys() -> &'static str {
     if is_chinese() {
-        "[ ] 切换应用  Enter 详情  s 切换  / 过滤  Esc 返回  ? 帮助"
+        "[ ] 切换应用  Enter 详情  Space 切换  / 过滤  Esc 返回  ? 帮助"
     } else {
-        "[ ] switch app  Enter details  s switch  / filter  Esc back  ? help"
+        "[ ] switch app  Enter details  Space switch  / filter  Esc back  ? help"
     }
 }
 

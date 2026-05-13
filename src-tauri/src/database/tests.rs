@@ -1088,6 +1088,85 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
 }
 
 #[test]
+fn schema_migration_masks_legacy_failover_without_takeover() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    Database::set_user_version(&conn, 2).expect("set user_version");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO settings (key, value) VALUES
+            ('proxy_takeover_claude', 'false'),
+            ('auto_failover_enabled_claude', 'true'),
+            ('proxy_takeover_codex', 'true'),
+            ('auto_failover_enabled_codex', 'true');
+
+        CREATE TABLE proxy_config (
+            id INTEGER PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+            listen_port INTEGER NOT NULL DEFAULT 5000,
+            max_retries INTEGER NOT NULL DEFAULT 3,
+            request_timeout INTEGER NOT NULL DEFAULT 300,
+            enable_logging INTEGER NOT NULL DEFAULT 1,
+            target_app TEXT NOT NULL DEFAULT 'claude',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO proxy_config (id, enabled) VALUES (1, 1);
+        "#,
+    )
+    .expect("seed legacy proxy state");
+
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let claude: (i64, i64) = conn
+        .query_row(
+            "SELECT enabled, auto_failover_enabled FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read claude proxy config");
+    assert_eq!(claude, (0, 0));
+
+    let codex: (i64, i64) = conn
+        .query_row(
+            "SELECT enabled, auto_failover_enabled FROM proxy_config WHERE app_type = 'codex'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read codex proxy config");
+    assert_eq!(codex, (1, 0));
+}
+
+#[test]
+fn schema_migration_clears_current_failover_without_takeover() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, SCHEMA_VERSION).expect("set current user_version");
+    conn.execute(
+        "UPDATE proxy_config
+         SET enabled = 0, auto_failover_enabled = 1
+         WHERE app_type = 'claude'",
+        [],
+    )
+    .expect("seed invalid current proxy config");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let auto_failover_enabled: i64 = conn
+        .query_row(
+            "SELECT auto_failover_enabled FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read auto_failover_enabled");
+    assert_eq!(auto_failover_enabled, 0);
+}
+
+#[test]
 fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
     let conn = Connection::open_in_memory().expect("open memory db");
     conn.execute("PRAGMA foreign_keys = ON;", [])

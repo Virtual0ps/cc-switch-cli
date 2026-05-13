@@ -294,6 +294,10 @@ impl AppType {
         matches!(self, AppType::OpenCode | AppType::OpenClaw)
     }
 
+    pub fn supports_failover(&self) -> bool {
+        matches!(self, AppType::Claude | AppType::Codex | AppType::Gemini)
+    }
+
     pub fn all() -> impl Iterator<Item = AppType> {
         [
             AppType::Claude,
