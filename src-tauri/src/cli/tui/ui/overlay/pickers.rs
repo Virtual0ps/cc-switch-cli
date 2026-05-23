@@ -1066,6 +1066,7 @@ pub(super) fn render_visible_apps_picker_overlay(
             crate::app_config::AppType::Codex,
             crate::app_config::AppType::Gemini,
             crate::app_config::AppType::OpenCode,
+            crate::app_config::AppType::Hermes,
             crate::app_config::AppType::OpenClaw,
         ],
     );
@@ -1306,7 +1307,6 @@ fn render_apps_picker_overlay<A>(
         } else {
             texts::tui_marker_inactive()
         };
-
         ListItem::new(Line::from(Span::raw(format!(
             "{marker}  {}",
             app_type.as_str()

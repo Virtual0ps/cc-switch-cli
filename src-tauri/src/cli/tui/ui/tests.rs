@@ -1026,6 +1026,32 @@ fn settings_page_shows_visible_apps_row_value() {
 
 #[test]
 #[serial(home_settings)]
+fn settings_page_shows_visible_apps_mode_row_value() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let temp_home = TempDir::new().expect("create temp home");
+    let _home = SettingsEnvGuard::set_home(temp_home.path());
+    crate::settings::set_visible_apps_mode(crate::settings::VisibleAppsMode::Manual)
+        .expect("save visible apps mode");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Settings;
+    app.focus = Focus::Content;
+
+    let all = all_text(&render(&app, &minimal_data(&app.app_type)));
+
+    assert!(
+        all.contains(texts::tui_settings_visible_apps_mode_label()),
+        "{all}"
+    );
+    assert!(
+        all.contains(texts::tui_settings_visible_apps_mode_manual()),
+        "{all}"
+    );
+}
+
+#[test]
+#[serial(home_settings)]
 fn settings_page_shows_openclaw_config_dir_default_value() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -1102,6 +1128,7 @@ fn zero_selection_warning_toast_renders_after_picker_rejection() {
         all.contains(texts::tui_settings_visible_apps_title()),
         "{all}"
     );
+    assert!(all.contains(AppType::Hermes.as_str()), "{all}");
     assert!(all.contains(AppType::OpenClaw.as_str()), "{all}");
     assert!(
         all.contains(texts::tui_toast_visible_apps_zero_selection_warning()),
@@ -1133,6 +1160,44 @@ fn visible_apps_picker_uses_space_toggle_key() {
 
     assert!(all.contains("Space=toggle"), "{all}");
     assert!(!all.contains("x=toggle"), "{all}");
+}
+
+#[test]
+#[serial(home_settings)]
+fn visible_apps_picker_auto_mode_does_not_append_auto_suffix_to_apps() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::set("NO_COLOR", "1");
+    let temp_home = TempDir::new().expect("create temp home");
+    let _home = SettingsEnvGuard::set_home(temp_home.path());
+    crate::settings::set_visible_apps_mode(crate::settings::VisibleAppsMode::Auto)
+        .expect("save visible apps mode");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Settings;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::VisibleAppsPicker {
+        selected: 2,
+        apps: crate::settings::VisibleApps {
+            claude: true,
+            codex: true,
+            gemini: true,
+            opencode: true,
+            hermes: true,
+            openclaw: true,
+        },
+    };
+
+    let all = all_text(&render(&app, &minimal_data(&app.app_type)));
+
+    assert!(all.contains(AppType::Gemini.as_str()), "{all}");
+    assert!(
+        !all.contains(&format!(
+            "{}  {}",
+            AppType::Gemini.as_str(),
+            texts::tui_settings_visible_apps_mode_auto()
+        )),
+        "{all}"
+    );
 }
 
 #[test]

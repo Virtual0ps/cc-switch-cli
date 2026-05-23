@@ -2504,6 +2504,7 @@ pub(super) fn render_settings(
 ) {
     let language = crate::cli::i18n::current_language();
     let visible_apps = crate::settings::get_visible_apps();
+    let visible_apps_mode = crate::settings::get_visible_apps_settings().mode;
     let openclaw_config_dir = crate::settings::get_settings().openclaw_config_dir;
     let skip_claude_onboarding = crate::settings::get_skip_claude_onboarding();
     let claude_plugin_integration = crate::settings::get_enable_claude_plugin_integration();
@@ -2514,6 +2515,17 @@ pub(super) fn render_settings(
             super::app::SettingsItem::Language => (
                 texts::tui_settings_header_language().to_string(),
                 language.display_name().to_string(),
+            ),
+            super::app::SettingsItem::VisibleAppsMode => (
+                texts::tui_settings_visible_apps_mode_label().to_string(),
+                match visible_apps_mode {
+                    crate::settings::VisibleAppsMode::Auto => {
+                        texts::tui_settings_visible_apps_mode_auto().to_string()
+                    }
+                    crate::settings::VisibleAppsMode::Manual => {
+                        texts::tui_settings_visible_apps_mode_manual().to_string()
+                    }
+                },
             ),
             super::app::SettingsItem::VisibleApps => (
                 texts::tui_settings_visible_apps_label().to_string(),

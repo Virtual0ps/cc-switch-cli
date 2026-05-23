@@ -762,12 +762,29 @@ impl App {
                 Action::None
             }
             KeyCode::Down => {
-                *selected = (*selected + 1).min(4);
+                *selected = (*selected + 1).min(5);
                 Action::None
             }
             KeyCode::Char(' ') => {
                 let app_type = app_type_for_picker_index(*selected);
-                let enabled = apps.is_enabled_for(&app_type);
+                let mut next = apps.clone();
+                let enabled = next.is_enabled_for(&app_type);
+                next.set_enabled_for(&app_type, !enabled);
+
+                if crate::settings::get_visible_apps_settings().mode
+                    == crate::settings::VisibleAppsMode::Auto
+                {
+                    self.overlay = Overlay::Confirm(ConfirmOverlay {
+                        title: texts::tui_visible_apps_manual_switch_prompt_title().to_string(),
+                        message: texts::tui_visible_apps_manual_switch_prompt_message().to_string(),
+                        action: ConfirmAction::VisibleAppsSwitchToManual {
+                            apps: next,
+                            selected: *selected,
+                        },
+                    });
+                    return Some(Action::None);
+                }
+
                 apps.set_enabled_for(&app_type, !enabled);
                 Action::None
             }

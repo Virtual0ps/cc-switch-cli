@@ -226,8 +226,18 @@ pub enum Action {
         enabled: bool,
     },
     SetLanguage(Language),
+    SetVisibleAppsMode {
+        mode: crate::settings::VisibleAppsMode,
+    },
     SetVisibleApps {
         apps: crate::settings::VisibleApps,
+    },
+    ConfirmVisibleAppsAutoDetection {
+        use_auto: bool,
+    },
+    SwitchVisibleAppsToManual {
+        apps: crate::settings::VisibleApps,
+        selected: usize,
     },
 
     CheckUpdate,
@@ -379,6 +389,7 @@ impl ConfigItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsItem {
     Language,
+    VisibleAppsMode,
     VisibleApps,
     OpenClawConfigDir,
     SkipClaudeOnboarding,
@@ -388,8 +399,9 @@ pub enum SettingsItem {
 }
 
 impl SettingsItem {
-    pub const ALL: [SettingsItem; 7] = [
+    pub const ALL: [SettingsItem; 8] = [
         SettingsItem::Language,
+        SettingsItem::VisibleAppsMode,
         SettingsItem::VisibleApps,
         SettingsItem::OpenClawConfigDir,
         SettingsItem::SkipClaudeOnboarding,

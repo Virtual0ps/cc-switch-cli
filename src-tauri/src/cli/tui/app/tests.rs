@@ -9169,6 +9169,8 @@ mod tests {
             openclaw: false,
         })
         .expect("save visible apps");
+        crate::settings::set_visible_apps_mode(crate::settings::VisibleAppsMode::Manual)
+            .expect("save visible apps mode");
 
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Settings;
@@ -9237,6 +9239,129 @@ mod tests {
                     && !apps.opencode
                     && !apps.openclaw
         ));
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn visible_apps_picker_prompts_manual_switch_for_controlled_app_in_auto_mode() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+        let mut settings = crate::settings::get_settings();
+        settings.visible_apps = crate::settings::VisibleApps {
+            claude: true,
+            codex: true,
+            gemini: true,
+            opencode: false,
+            hermes: false,
+            openclaw: false,
+        };
+        settings.visible_apps_settings.mode = crate::settings::VisibleAppsMode::Auto;
+        settings.visible_apps_settings.auto_prompt_decided = true;
+        crate::settings::update_settings(settings).expect("save settings");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Settings;
+        app.focus = Focus::Content;
+        app.overlay = Overlay::VisibleAppsPicker {
+            selected: app_type_picker_index(&AppType::Gemini),
+            apps: crate::settings::get_visible_apps(),
+        };
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &UiData::default());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::Confirm(ConfirmOverlay {
+                action: ConfirmAction::VisibleAppsSwitchToManual { apps, selected },
+                ..
+            }) if !apps.gemini && *selected == app_type_picker_index(&AppType::Gemini)
+        ));
+        assert!(app.toast.is_none());
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn visible_apps_picker_prompts_manual_switch_for_claude_codex_in_auto_mode() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+        let mut settings = crate::settings::get_settings();
+        settings.visible_apps = crate::settings::VisibleApps {
+            claude: true,
+            codex: true,
+            gemini: false,
+            opencode: false,
+            hermes: false,
+            openclaw: false,
+        };
+        settings.visible_apps_settings.mode = crate::settings::VisibleAppsMode::Auto;
+        settings.visible_apps_settings.auto_prompt_decided = true;
+        crate::settings::update_settings(settings).expect("save settings");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Settings;
+        app.focus = Focus::Content;
+        app.overlay = Overlay::VisibleAppsPicker {
+            selected: app_type_picker_index(&AppType::Codex),
+            apps: crate::settings::get_visible_apps(),
+        };
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &UiData::default());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::Confirm(ConfirmOverlay {
+                action: ConfirmAction::VisibleAppsSwitchToManual { apps, selected },
+                ..
+            }) if !apps.codex && *selected == app_type_picker_index(&AppType::Codex)
+        ));
+        assert!(app.toast.is_none());
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn visible_apps_manual_switch_prompt_cancel_returns_to_picker_without_change() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+        let initial = crate::settings::VisibleApps {
+            claude: true,
+            codex: true,
+            gemini: false,
+            opencode: false,
+            hermes: false,
+            openclaw: false,
+        };
+        let mut settings = crate::settings::get_settings();
+        settings.visible_apps = initial.clone();
+        settings.visible_apps_settings.mode = crate::settings::VisibleAppsMode::Auto;
+        settings.visible_apps_settings.auto_prompt_decided = true;
+        crate::settings::update_settings(settings).expect("save settings");
+
+        let mut next = initial.clone();
+        next.codex = false;
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.overlay = Overlay::Confirm(ConfirmOverlay {
+            title: texts::tui_visible_apps_manual_switch_prompt_title().to_string(),
+            message: texts::tui_visible_apps_manual_switch_prompt_message().to_string(),
+            action: ConfirmAction::VisibleAppsSwitchToManual {
+                apps: next,
+                selected: app_type_picker_index(&AppType::Codex),
+            },
+        });
+
+        let action = app.on_key(key(KeyCode::Esc), &UiData::default());
+
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::VisibleAppsPicker { selected, apps }
+                if *selected == app_type_picker_index(&AppType::Codex) && apps == &initial
+        ));
+        assert_eq!(crate::settings::get_visible_apps(), initial);
+        assert_eq!(
+            crate::settings::get_visible_apps_settings().mode,
+            crate::settings::VisibleAppsMode::Auto
+        );
     }
 
     #[test]

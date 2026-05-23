@@ -288,6 +288,22 @@ impl App {
         self.toast = Some(Toast::new(message, kind));
     }
 
+    pub(crate) fn prompt_visible_apps_auto_detection(&mut self) {
+        if self.overlay.is_active() || self.pending_overlay.is_some() {
+            self.pending_overlay = Some(Overlay::Confirm(ConfirmOverlay {
+                title: texts::tui_visible_apps_auto_prompt_title().to_string(),
+                message: texts::tui_visible_apps_auto_prompt_message().to_string(),
+                action: ConfirmAction::VisibleAppsAutoDetection,
+            }));
+        } else {
+            self.overlay = Overlay::Confirm(ConfirmOverlay {
+                title: texts::tui_visible_apps_auto_prompt_title().to_string(),
+                message: texts::tui_visible_apps_auto_prompt_message().to_string(),
+                action: ConfirmAction::VisibleAppsAutoDetection,
+            });
+        }
+    }
+
     pub fn open_help(&mut self) {
         self.overlay = Overlay::Help;
     }

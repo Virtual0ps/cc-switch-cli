@@ -3342,6 +3342,30 @@ pub mod texts {
         }
     }
 
+    pub fn tui_key_use_auto() -> &'static str {
+        if is_chinese() {
+            "使用自动"
+        } else {
+            "use auto"
+        }
+    }
+
+    pub fn tui_key_keep_current() -> &'static str {
+        if is_chinese() {
+            "保留当前"
+        } else {
+            "keep current"
+        }
+    }
+
+    pub fn tui_key_switch_to_manual() -> &'static str {
+        if is_chinese() {
+            "切到手动"
+        } else {
+            "switch to manual"
+        }
+    }
+
     pub fn tui_key_no() -> &'static str {
         if is_chinese() {
             "返回"
@@ -3592,6 +3616,30 @@ pub mod texts {
         }
     }
 
+    pub fn tui_settings_visible_apps_mode_label() -> &'static str {
+        if is_chinese() {
+            "可见应用模式"
+        } else {
+            "Visible Apps Mode"
+        }
+    }
+
+    pub fn tui_settings_visible_apps_mode_auto() -> &'static str {
+        if is_chinese() {
+            "自动"
+        } else {
+            "auto"
+        }
+    }
+
+    pub fn tui_settings_visible_apps_mode_manual() -> &'static str {
+        if is_chinese() {
+            "手动"
+        } else {
+            "manual"
+        }
+    }
+
     pub fn tui_settings_visible_apps_title() -> &'static str {
         if is_chinese() {
             "选择可见应用"
@@ -3753,6 +3801,62 @@ pub mod texts {
             "可见应用已保存。"
         } else {
             "Visible apps saved."
+        }
+    }
+
+    pub fn tui_toast_visible_apps_mode_saved(mode: &str) -> String {
+        if is_chinese() {
+            format!("可见应用模式已设为{mode}。")
+        } else {
+            format!("Visible apps mode set to {mode}.")
+        }
+    }
+
+    pub fn tui_toast_visible_apps_auto_updated(apps: &str) -> String {
+        if is_chinese() {
+            format!("已更新可见应用：{apps}")
+        } else {
+            format!("Visible apps updated: {apps}")
+        }
+    }
+
+    pub fn tui_toast_visible_apps_manual_hidden_installed(app: &str) -> String {
+        if is_chinese() {
+            format!("{app} 已安装但被隐藏。可在设置 > 可见应用中启用。")
+        } else {
+            format!("Installed but hidden: {app}. Enable them in Settings > Visible Apps.")
+        }
+    }
+
+    pub fn tui_visible_apps_auto_prompt_title() -> &'static str {
+        if is_chinese() {
+            "可见应用自动检测"
+        } else {
+            "Visible App Auto Detection"
+        }
+    }
+
+    pub fn tui_visible_apps_auto_prompt_message() -> &'static str {
+        if is_chinese() {
+            "CC Switch 可以根据已安装的本地 CLI 显示应用，并隐藏未安装的应用。"
+        } else {
+            "CC Switch can show installed apps and hide apps that are not installed."
+        }
+    }
+
+    pub fn tui_visible_apps_manual_switch_prompt_title() -> &'static str {
+        if is_chinese() {
+            "切换到手动模式"
+        } else {
+            "Switch to Manual Mode"
+        }
+    }
+
+    pub fn tui_visible_apps_manual_switch_prompt_message() -> &'static str {
+        if is_chinese() {
+            "自动模式下不可直接调整可见应用。切换到手动模式并应用这次更改？"
+        } else {
+            "Visible apps cannot be changed directly in auto mode. Switch to manual mode and apply this change?"
         }
     }
 

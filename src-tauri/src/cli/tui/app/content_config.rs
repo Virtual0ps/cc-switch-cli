@@ -725,6 +725,18 @@ impl App {
                     };
                     Action::SetLanguage(next)
                 }
+                Some(SettingsItem::VisibleAppsMode) => {
+                    let current = crate::settings::get_visible_apps_settings().mode;
+                    let next = match current {
+                        crate::settings::VisibleAppsMode::Auto => {
+                            crate::settings::VisibleAppsMode::Manual
+                        }
+                        crate::settings::VisibleAppsMode::Manual => {
+                            crate::settings::VisibleAppsMode::Auto
+                        }
+                    };
+                    Action::SetVisibleAppsMode { mode: next }
+                }
                 Some(SettingsItem::VisibleApps) => {
                     self.overlay = Overlay::VisibleAppsPicker {
                         selected: app_type_picker_index(&self.app_type),

@@ -57,23 +57,56 @@ impl Toast {
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
     Quit,
-    ProviderDelete { id: String },
-    ProviderRemoveFromConfig { id: String },
-    McpDelete { id: String },
-    PromptDelete { id: String },
-    SkillsUninstall { directory: String },
-    SkillsRepoRemove { owner: String, name: String },
-    ConfigImport { path: String },
-    ConfigRestoreBackup { id: String },
+    ProviderDelete {
+        id: String,
+    },
+    ProviderRemoveFromConfig {
+        id: String,
+    },
+    McpDelete {
+        id: String,
+    },
+    PromptDelete {
+        id: String,
+    },
+    SkillsUninstall {
+        directory: String,
+    },
+    SkillsRepoRemove {
+        owner: String,
+        name: String,
+    },
+    ConfigImport {
+        path: String,
+    },
+    ConfigRestoreBackup {
+        id: String,
+    },
     ConfigReset,
-    SettingsSetSkipClaudeOnboarding { enabled: bool },
-    SettingsSetClaudePluginIntegration { enabled: bool },
+    SettingsSetSkipClaudeOnboarding {
+        enabled: bool,
+    },
+    SettingsSetClaudePluginIntegration {
+        enabled: bool,
+    },
+    VisibleAppsAutoDetection,
+    VisibleAppsSwitchToManual {
+        apps: crate::settings::VisibleApps,
+        selected: usize,
+    },
     ProviderApiFormatProxyNotice,
     CommonConfigNotice,
     UsageQueryNotice,
-    ProxyEnableAndAutoFailover { app_type: AppType },
-    PromptOpenImportCandidate { filename: String, content: String },
-    OpenClawDailyMemoryDelete { filename: String },
+    ProxyEnableAndAutoFailover {
+        app_type: AppType,
+    },
+    PromptOpenImportCandidate {
+        filename: String,
+        content: String,
+    },
+    OpenClawDailyMemoryDelete {
+        filename: String,
+    },
     FormSaveBeforeClose,
     EditorDiscard,
     EditorSaveBeforeClose,
