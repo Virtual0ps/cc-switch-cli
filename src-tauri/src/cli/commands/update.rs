@@ -1,4 +1,5 @@
 use clap::Args;
+#[cfg(not(windows))]
 use flate2::read::GzDecoder;
 use minisign_verify::{PublicKey, Signature};
 use semver::Version;
@@ -8,6 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use tar::Archive;
 use tempfile::TempDir;
 use url::Url;

@@ -914,6 +914,7 @@ impl ProxyService {
         None
     }
 
+    #[cfg(unix)]
     fn proxy_status_from_daemon_response(
         response: crate::daemon::ipc::protocol::Response,
     ) -> Option<ProxyStatus> {
@@ -2912,6 +2913,7 @@ mod tests {
             .expect("queue failover provider");
     }
 
+    #[cfg(unix)]
     #[test]
     fn daemon_status_snapshot_maps_workers_to_proxy_status() {
         let status = ProxyService::proxy_status_from_daemon_response(

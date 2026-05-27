@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Proxy / GPT Compatibility**: Sanitize empty `Read` pages from GPT responses before forwarding them through the proxy. [#199](https://github.com/SaladDay/cc-switch-cli/pull/199)
 - **TUI / App Detection**: Avoid version checks during app detection, preventing detection from doing unnecessary release lookups.
+- **Windows / Build**: Keep Unix daemon-only proxy status mapping out of Windows builds while Windows proxy remains unsupported.
 
 ### Commits (since v5.6.1)
 
