@@ -24,6 +24,19 @@ use super::{
     },
 };
 
+const HOP_BY_HOP_RESPONSE_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+];
+
 pub struct PreparedResponse {
     pub response: Response,
     pub stream_completion: Option<StreamCompletion>,
@@ -85,9 +98,12 @@ impl StreamCompletion {
 }
 
 pub fn is_sse_response(response: &reqwest::Response) -> bool {
-    response
-        .headers()
-        .get("content-type")
+    is_sse_headers(response.headers())
+}
+
+pub fn is_sse_headers(headers: &reqwest::header::HeaderMap) -> bool {
+    headers
+        .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(|ct| ct.contains("text/event-stream"))
         .unwrap_or(false)
@@ -101,7 +117,7 @@ pub async fn build_passthrough_response(
     let status = response.status();
     let headers = response.headers().clone();
     let mut builder = Response::builder().status(status);
-    copy_headers(&mut builder, &headers, false);
+    copy_headers(&mut builder, &headers, false, false);
 
     if is_sse_response(&response) {
         let stream_completion = StreamCompletion::default();
@@ -167,6 +183,17 @@ pub async fn build_codex_chat_error_response(
     build_buffered_codex_chat_response(status, &headers, body, history).await
 }
 
+pub async fn build_codex_chat_response(
+    response: reqwest::Response,
+    timeout: Option<Duration>,
+    history: Arc<CodexChatHistoryStore>,
+) -> Result<PreparedResponse, ProxyError> {
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = read_buffered_body(response, timeout).await?;
+    build_buffered_codex_chat_response(status, &headers, body, history).await
+}
+
 pub fn build_buffered_passthrough_response(
     status: reqwest::StatusCode,
     headers: &reqwest::header::HeaderMap,
@@ -179,7 +206,7 @@ pub fn build_buffered_passthrough_response(
     };
     let estimated_output_tokens = estimate_tokens_from_bytes(&body);
     let mut builder = Response::builder().status(status);
-    copy_headers(&mut builder, headers, false);
+    copy_headers(&mut builder, headers, false, false);
     let response_bytes = body.clone();
     builder
         .body(Body::from(body))
@@ -217,7 +244,7 @@ pub fn build_anthropic_stream_response(
     let status = response.status();
     let headers = response.headers().clone();
     let mut builder = Response::builder().status(status);
-    copy_headers(&mut builder, &headers, true);
+    copy_headers(&mut builder, &headers, true, true);
 
     let stream_completion = StreamCompletion::default();
     let timed_stream = with_stream_timeouts(
@@ -256,7 +283,7 @@ pub fn build_codex_chat_stream_response(
     let status = response.status();
     let headers = response.headers().clone();
     let mut builder = Response::builder().status(status);
-    copy_headers(&mut builder, &headers, true);
+    copy_headers(&mut builder, &headers, true, true);
 
     let stream_completion = StreamCompletion::default();
     let timed_stream = with_stream_timeouts(
@@ -315,7 +342,7 @@ pub async fn build_buffered_codex_chat_response(
     let mut response_headers = headers.clone();
     response_headers.remove(reqwest::header::CONTENT_TYPE);
     let mut builder = Response::builder().status(status);
-    copy_headers(&mut builder, &response_headers, false);
+    copy_headers(&mut builder, &response_headers, false, true);
     builder = builder.header("content-type", "application/json");
 
     builder
@@ -459,10 +486,27 @@ fn copy_headers(
     builder: &mut http::response::Builder,
     headers: &reqwest::header::HeaderMap,
     force_sse_content_type: bool,
+    strip_rebuilt_entity_headers: bool,
 ) {
+    let connection_listed_headers: Vec<String> = headers
+        .get_all(reqwest::header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+
     for (key, value) in headers {
         let lower = key.as_str().to_ascii_lowercase();
-        if lower == "content-length" || lower == "transfer-encoding" {
+        if lower == "content-length"
+            || HOP_BY_HOP_RESPONSE_HEADERS.contains(&lower.as_str())
+            || connection_listed_headers
+                .iter()
+                .any(|listed| listed == &lower)
+            || (strip_rebuilt_entity_headers && lower == "content-encoding")
+        {
             continue;
         }
         if force_sse_content_type && lower == "content-type" {
@@ -528,7 +572,7 @@ where
     let estimated_output_tokens = estimate_tokens_from_bytes(&response_bytes);
 
     let mut builder = Response::builder().status(status);
-    copy_headers(&mut builder, headers, false);
+    copy_headers(&mut builder, headers, false, true);
     builder = builder.header("content-type", "application/json");
 
     builder

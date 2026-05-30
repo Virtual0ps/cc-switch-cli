@@ -132,6 +132,7 @@ impl RequestForwarder {
         self
     }
 
+    #[cfg(test)]
     pub async fn forward_response(
         &self,
         app_type: &AppType,

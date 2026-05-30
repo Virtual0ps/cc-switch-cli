@@ -163,11 +163,17 @@ async fn non_success_standard_json_errors_can_still_transform() {
     .expect("standard upstream json errors should still transform");
 
     assert_eq!(prepared.response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value =
+        serde_json::from_slice(&buffered_body(prepared.response).await).expect("response json");
     assert_eq!(
-        buffered_body(prepared.response).await,
-        Bytes::from_static(
-            br#"{"error":{"message":"upstream rejected the request","type":"invalid_request_error"},"type":"error"}"#,
-        )
+        body,
+        json!({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "upstream rejected the request"
+            }
+        })
     );
 }
 
@@ -196,6 +202,114 @@ async fn codex_chat_buffered_success_converts_to_responses_shape() {
     assert_eq!(body["output"][0]["content"][0]["text"], "hello");
     assert_eq!(body["usage"]["input_tokens"], 3);
     assert_eq!(body["usage"]["output_tokens"], 2);
+}
+
+#[tokio::test]
+async fn codex_chat_buffered_transform_strips_hop_by_hop_headers() {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        reqwest::header::CONNECTION,
+        HeaderValue::from_static("x-trace-hop, keep-alive"),
+    );
+    headers.insert(
+        reqwest::header::HeaderName::from_static("x-trace-hop"),
+        HeaderValue::from_static("trace"),
+    );
+    headers.insert(
+        reqwest::header::HeaderName::from_static("keep-alive"),
+        HeaderValue::from_static("timeout=5"),
+    );
+    headers.insert(
+        reqwest::header::HeaderName::from_static("proxy-connection"),
+        HeaderValue::from_static("keep-alive"),
+    );
+    headers.insert(
+        reqwest::header::UPGRADE,
+        HeaderValue::from_static("websocket"),
+    );
+    headers.insert(
+        reqwest::header::CONTENT_ENCODING,
+        HeaderValue::from_static("gzip"),
+    );
+    headers.insert("x-stable-header", HeaderValue::from_static("kept"));
+
+    let prepared = build_buffered_codex_chat_response(
+        reqwest::StatusCode::OK,
+        &headers,
+        Bytes::from_static(
+            br#"{"id":"chatcmpl_123","object":"chat.completion","created":1710000000,"model":"deepseek-chat","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}"#,
+        ),
+        Arc::new(Default::default()),
+    )
+    .await
+    .expect("convert Chat success response");
+
+    let response_headers = prepared.response.headers();
+    assert!(!response_headers.contains_key(reqwest::header::CONNECTION));
+    assert!(!response_headers.contains_key("x-trace-hop"));
+    assert!(!response_headers.contains_key("keep-alive"));
+    assert!(!response_headers.contains_key("proxy-connection"));
+    assert!(!response_headers.contains_key(reqwest::header::UPGRADE));
+    assert!(!response_headers.contains_key(reqwest::header::CONTENT_ENCODING));
+    assert_eq!(
+        response_headers
+            .get("x-stable-header")
+            .and_then(|value| value.to_str().ok()),
+        Some("kept")
+    );
+}
+
+#[test]
+fn buffered_passthrough_strips_hop_by_hop_headers() {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        reqwest::header::CONNECTION,
+        HeaderValue::from_static("x-trace-hop, upgrade"),
+    );
+    headers.insert(
+        reqwest::header::HeaderName::from_static("x-trace-hop"),
+        HeaderValue::from_static("trace"),
+    );
+    headers.insert(
+        reqwest::header::HeaderName::from_static("proxy-connection"),
+        HeaderValue::from_static("keep-alive"),
+    );
+    headers.insert(
+        reqwest::header::UPGRADE,
+        HeaderValue::from_static("websocket"),
+    );
+    headers.insert(
+        reqwest::header::CONTENT_ENCODING,
+        HeaderValue::from_static("gzip"),
+    );
+    headers.insert("x-stable-header", HeaderValue::from_static("kept"));
+
+    let prepared = build_buffered_passthrough_response(
+        reqwest::StatusCode::OK,
+        &headers,
+        Bytes::from_static(br#"{"ok":true}"#),
+    )
+    .expect("build passthrough response");
+
+    let response_headers = prepared.response.headers();
+    assert!(!response_headers.contains_key(reqwest::header::CONNECTION));
+    assert!(!response_headers.contains_key("x-trace-hop"));
+    assert!(!response_headers.contains_key("proxy-connection"));
+    assert!(!response_headers.contains_key(reqwest::header::UPGRADE));
+    assert_eq!(
+        response_headers
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|value| value.to_str().ok()),
+        Some("gzip")
+    );
+    assert_eq!(
+        response_headers
+            .get("x-stable-header")
+            .and_then(|value| value.to_str().ok()),
+        Some("kept")
+    );
 }
 
 #[tokio::test]
