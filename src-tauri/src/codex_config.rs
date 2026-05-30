@@ -1,16 +1,16 @@
-// unused imports removed
 use std::path::PathBuf;
 
 use crate::config::{
-    atomic_write, delete_file, home_dir, sanitize_provider_name, write_json_file, write_text_file,
+    atomic_write, delete_file, home_dir, read_json_file, sanitize_provider_name, write_json_file,
+    write_text_file,
 };
 use crate::error::AppError;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 use toml_edit::DocumentMut;
 
-pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
+pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
@@ -212,7 +212,7 @@ fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
         .map(str::to_string)
 }
 
-fn is_custom_codex_model_provider_id(id: &str) -> bool {
+pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     let id = id.trim();
     !id.is_empty()
         && !CODEX_RESERVED_MODEL_PROVIDER_IDS
@@ -220,203 +220,272 @@ fn is_custom_codex_model_provider_id(id: &str) -> bool {
             .any(|reserved| reserved.eq_ignore_ascii_case(id))
 }
 
-fn stable_codex_model_provider_id_from_config(config_text: &str) -> Option<String> {
-    let doc = config_text.parse::<DocumentMut>().ok()?;
-    let provider_id = active_codex_model_provider_id(&doc)?;
-
-    if is_custom_codex_model_provider_id(&provider_id) {
-        Some(provider_id)
-    } else {
-        None
-    }
-}
-
-fn codex_model_provider_id_with_table_from_config(
-    config_text: &str,
-) -> Result<Option<String>, AppError> {
-    if config_text.trim().is_empty() {
-        return Ok(None);
-    }
-
-    let doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
-        return Ok(None);
+/// Write only Codex `config.toml` for provider switching.
+///
+/// Codex login state lives in `auth.json`; provider routing, endpoint, model,
+/// and provider-scoped bearer tokens live in `config.toml`. Provider switches
+/// should not overwrite the user's ChatGPT login cache.
+pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
+    let config_path = get_codex_config_path();
+    let cfg_text = match config_text_opt {
+        Some(config_text) => config_text.to_string(),
+        None => String::new(),
     };
 
-    let has_provider_table = doc
-        .get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|table| table.get(provider_id.as_str()))
-        .is_some();
+    if !cfg_text.trim().is_empty() {
+        toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
+    }
 
-    Ok(has_provider_table.then_some(provider_id))
+    write_text_file(&config_path, &cfg_text)
 }
 
-fn normalize_codex_live_config_model_provider_with_anchors<'a>(
-    config_text: &str,
-    anchor_config_texts: impl IntoIterator<Item = &'a str>,
-) -> Result<String, AppError> {
+pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
+    auth.get("OPENAI_API_KEY")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+}
+
+pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) -> Option<String> {
+    auth.and_then(extract_codex_auth_api_key)
+        .or_else(|| config_text.and_then(extract_codex_experimental_bearer_token))
+}
+
+pub fn codex_auth_has_login_material(auth: &Value) -> bool {
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+
+    obj.iter().any(|(key, value)| {
+        if key == "auth_mode" {
+            return false;
+        }
+
+        if key == "OPENAI_API_KEY" {
+            return value
+                .as_str()
+                .map(str::trim)
+                .is_some_and(|token| !token.is_empty());
+        }
+
+        match value {
+            Value::Null => false,
+            Value::String(text) => !text.trim().is_empty(),
+            Value::Array(items) => !items.is_empty(),
+            Value::Object(map) => !map.is_empty(),
+            _ => true,
+        }
+    })
+}
+
+pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+
+    obj.iter().any(|(key, value)| {
+        if key == "auth_mode" || key == "OPENAI_API_KEY" {
+            return false;
+        }
+
+        match value {
+            Value::Null => false,
+            Value::String(text) => !text.trim().is_empty(),
+            Value::Array(items) => !items.is_empty(),
+            Value::Object(map) => !map.is_empty(),
+            _ => true,
+        }
+    })
+}
+
+pub fn should_restore_codex_provider_token_for_backfill(
+    category: Option<&str>,
+    template_settings: &Value,
+) -> bool {
+    if category == Some("official") {
+        return false;
+    }
+
+    let Some(auth) = template_settings.get("auth") else {
+        return true;
+    };
+
+    let has_provider_api_key = extract_codex_auth_api_key(auth).is_some();
+    let has_oauth_login = codex_auth_has_oauth_login_material(auth);
+    !has_oauth_login || has_provider_api_key
+}
+
+/// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
+///
+/// Third-party providers may store the API key inside
+/// `[model_providers.<id>].experimental_bearer_token` while keeping the
+/// user's ChatGPT login cache intact in `auth.json`. Falls back to the
+/// top-level `experimental_bearer_token` when no active model provider is set.
+pub fn extract_codex_experimental_bearer_token(config_text: &str) -> Option<String> {
+    if !config_text.contains("experimental_bearer_token") {
+        return None;
+    }
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    let provider_id = active_codex_model_provider_id(&doc);
+
+    let top_level_token = || {
+        doc.get("experimental_bearer_token")
+            .and_then(|item| item.as_str())
+    };
+    let token = match provider_id.as_deref() {
+        Some(id) if is_custom_codex_model_provider_id(id) => doc
+            .get("model_providers")
+            .and_then(|item| item.as_table())
+            .and_then(|table| table.get(id))
+            .and_then(|item| item.as_table())
+            .and_then(|table| table.get("experimental_bearer_token"))
+            .and_then(|item| item.as_str())
+            .or_else(top_level_token),
+        Some(_) => top_level_token(),
+        None => top_level_token(),
+    };
+
+    token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+}
+
+fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result<String, AppError> {
     if config_text.trim().is_empty() {
-        return Ok(config_text.to_string());
+        return Err(AppError::localized(
+            "provider.codex.config.missing",
+            "Codex 第三方供应商缺少 config.toml 配置，无法写入 bearer token",
+            "Codex third-party provider is missing config.toml, cannot write bearer token",
+        ));
     }
 
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
-    let Some(source_provider_id) = active_codex_model_provider_id(&doc) else {
-        return Ok(config_text.to_string());
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        doc["experimental_bearer_token"] = toml_edit::value(token);
+        return Ok(doc.to_string());
     };
 
-    let has_source_provider_table = doc
-        .get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|table| table.get(source_provider_id.as_str()))
-        .is_some();
-    if !has_source_provider_table {
-        return Ok(config_text.to_string());
-    }
-
-    let stable_provider_id = anchor_config_texts
-        .into_iter()
-        .find_map(stable_codex_model_provider_id_from_config)
-        .or_else(|| {
-            is_custom_codex_model_provider_id(&source_provider_id)
-                .then(|| source_provider_id.clone())
-        })
-        .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
-
-    if stable_provider_id == source_provider_id {
-        return Ok(config_text.to_string());
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        // Reserved Codex provider IDs are owned by the CLI. Keep third-party
+        // bearer tokens at the top level so we do not shadow built-in tables.
+        doc["experimental_bearer_token"] = toml_edit::value(token);
+        return Ok(doc.to_string());
     }
 
     if let Some(model_providers) = doc
         .get_mut("model_providers")
         .and_then(|item| item.as_table_mut())
     {
-        let Some(provider_table) = model_providers.remove(source_provider_id.as_str()) else {
-            return Ok(config_text.to_string());
-        };
-        model_providers[stable_provider_id.as_str()] = provider_table;
-    }
-
-    rewrite_codex_profile_model_provider_refs(&mut doc, &source_provider_id, &stable_provider_id);
-    doc["model_provider"] = toml_edit::value(stable_provider_id.as_str());
-
-    Ok(doc.to_string())
-}
-
-fn rewrite_codex_profile_model_provider_refs(
-    doc: &mut DocumentMut,
-    source_provider_id: &str,
-    stable_provider_id: &str,
-) {
-    let Some(profiles) = doc
-        .get_mut("profiles")
-        .and_then(|item| item.as_table_like_mut())
-    else {
-        return;
-    };
-
-    let profile_keys: Vec<String> = profiles.iter().map(|(key, _)| key.to_string()).collect();
-    for profile_key in profile_keys {
-        let Some(profile_table) = profiles
-            .get_mut(&profile_key)
-            .and_then(|item| item.as_table_like_mut())
-        else {
-            continue;
-        };
-
-        let references_source = profile_table
-            .get("model_provider")
-            .and_then(|item| item.as_str())
-            == Some(source_provider_id);
-        if references_source {
-            profile_table.insert("model_provider", toml_edit::value(stable_provider_id));
+        if let Some(provider_table) = model_providers
+            .get_mut(provider_id.as_str())
+            .and_then(|item| item.as_table_mut())
+        {
+            provider_table["experimental_bearer_token"] = toml_edit::value(token);
+            return Ok(doc.to_string());
         }
     }
+
+    doc["experimental_bearer_token"] = toml_edit::value(token);
+    Ok(doc.to_string())
 }
 
-/// Keep Codex's active `model_provider` stable across CC Switch provider changes.
-///
-/// Codex stores and filters resume history by `model_provider`, so switching between
-/// provider-specific ids like `rightcode` and `aihubmix` makes history appear to move.
-/// We preserve an existing custom provider id when possible and only rewrite the
-/// live config text that Codex sees at provider-driven write boundaries.
-pub fn normalize_codex_settings_config_model_provider(
-    settings: &mut Value,
-    anchor_config_text: Option<&str>,
-) -> Result<(), AppError> {
-    let Some(config_text) = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-    else {
-        return Ok(());
-    };
-
-    let current_config_text = read_codex_config_text().ok();
-    let anchors = anchor_config_text
-        .into_iter()
-        .chain(current_config_text.as_deref());
-    let normalized =
-        normalize_codex_live_config_model_provider_with_anchors(&config_text, anchors)?;
-
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("config".to_string(), Value::String(normalized));
-    }
-
-    Ok(())
-}
-
-fn restore_codex_backfill_model_provider_id(
-    config_text: &str,
-    template_config_text: &str,
-) -> Result<String, AppError> {
-    let Some(template_provider_id) =
-        codex_model_provider_id_with_table_from_config(template_config_text)?
-    else {
-        return Ok(config_text.to_string());
-    };
-
-    if config_text.trim().is_empty() {
+fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, AppError> {
+    if config_text.trim().is_empty() || !config_text.contains("experimental_bearer_token") {
         return Ok(config_text.to_string());
     }
 
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    let Some(live_provider_id) = active_codex_model_provider_id(&doc) else {
-        return Ok(config_text.to_string());
-    };
 
-    if live_provider_id == template_provider_id {
-        return Ok(config_text.to_string());
+    if let Some(provider_id) = active_codex_model_provider_id(&doc) {
+        if let Some(provider_table) = doc
+            .get_mut("model_providers")
+            .and_then(|item| item.as_table_mut())
+            .and_then(|table| table.get_mut(provider_id.as_str()))
+            .and_then(|item| item.as_table_mut())
+        {
+            provider_table.remove("experimental_bearer_token");
+        }
     }
 
-    if let Some(model_providers) = doc
-        .get_mut("model_providers")
-        .and_then(|item| item.as_table_mut())
-    {
-        let Some(provider_table) = model_providers.remove(live_provider_id.as_str()) else {
-            return Ok(config_text.to_string());
-        };
-        model_providers[template_provider_id.as_str()] = provider_table;
-    } else {
-        return Ok(config_text.to_string());
-    }
-
-    rewrite_codex_profile_model_provider_refs(&mut doc, &live_provider_id, &template_provider_id);
-    doc["model_provider"] = toml_edit::value(template_provider_id.as_str());
-
+    doc.as_table_mut().remove("experimental_bearer_token");
     Ok(doc.to_string())
 }
 
-/// Convert a Codex live config that was normalized for history stability back
-/// to the provider-specific id used by the stored provider template.
-pub fn restore_codex_settings_config_model_provider_for_backfill(
+/// Read the current Codex live settings as a `{ auth, config }` object.
+///
+/// Missing `auth.json` collapses to `{}` so a config-only third-party install
+/// is still importable; both files empty is treated as "no live install".
+pub fn read_codex_live_settings() -> Result<Value, AppError> {
+    let auth_path = get_codex_auth_path();
+    let auth_present = auth_path.exists();
+    let auth: Value = if auth_present {
+        read_json_file(&auth_path)?
+    } else {
+        json!({})
+    };
+    let cfg_text = read_and_validate_codex_config_text()?;
+    if !auth_present && cfg_text.trim().is_empty() {
+        return Err(AppError::localized(
+            "codex.live.missing",
+            "Codex 配置文件不存在",
+            "Codex configuration is missing",
+        ));
+    }
+    Ok(json!({ "auth": auth, "config": cfg_text }))
+}
+
+/// Route a Codex live write between full auth+config or config-only.
+///
+/// Official providers with usable login material own `auth.json`; everyone
+/// else only touches `config.toml` so the user's ChatGPT login cache survives
+/// third-party switches.
+pub fn write_codex_live_for_provider(
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+) -> Result<(), AppError> {
+    if category == Some("official") && codex_auth_has_login_material(auth) {
+        write_codex_live_atomic(auth, config_text)
+    } else {
+        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        write_codex_live_config_atomic(Some(&live_config))
+    }
+}
+
+/// Build the live Codex config for provider switching.
+///
+/// The stored provider keeps its API key in `auth.OPENAI_API_KEY`. Live Codex
+/// requests can use a provider-scoped `experimental_bearer_token`, so switching
+/// providers only needs to update `config.toml`; `auth.json` stays as the user's
+/// long-lived ChatGPT login cache.
+pub fn prepare_codex_provider_live_config(
+    auth: &Value,
+    config_text: &str,
+) -> Result<String, AppError> {
+    let token = extract_codex_auth_api_key(auth)
+        .or_else(|| extract_codex_experimental_bearer_token(config_text));
+
+    Ok(match token {
+        Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
+        None => config_text.to_string(),
+    })
+}
+
+/// During DB backfill, lift a live `experimental_bearer_token` back into
+/// `auth.OPENAI_API_KEY` so the stored provider keeps its canonical shape
+/// and generated live tokens don't leak into stored provider TOML.
+///
+/// Only intervenes when the live config actually carries a bearer token;
+/// otherwise the function is a no-op so the caller's normal backfill path
+/// remains authoritative.
+pub fn restore_codex_provider_token_for_backfill(
     settings: &mut Value,
     template_settings: &Value,
 ) -> Result<(), AppError> {
@@ -427,50 +496,39 @@ pub fn restore_codex_settings_config_model_provider_for_backfill(
     else {
         return Ok(());
     };
-    let Some(template_config_text) = template_settings
-        .get("config")
-        .and_then(|value| value.as_str())
-    else {
+
+    let Some(token) = extract_codex_experimental_bearer_token(&config_text) else {
         return Ok(());
     };
 
-    let restored = restore_codex_backfill_model_provider_id(&config_text, template_config_text)?;
+    let cleaned_config = remove_codex_experimental_bearer_token(&config_text)?;
+
     if let Some(obj) = settings.as_object_mut() {
-        obj.insert("config".to_string(), Value::String(restored));
+        obj.insert("config".to_string(), Value::String(cleaned_config));
+
+        let mut auth = template_settings
+            .get("auth")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        if let Some(auth_obj) = auth.as_object_mut() {
+            auth_obj.insert("OPENAI_API_KEY".to_string(), Value::String(token));
+        }
+        obj.insert("auth".to_string(), auth);
     }
 
     Ok(())
 }
 
-/// Atomically write Codex live config after normalizing provider-specific ids.
-///
-/// Use this for provider-driven live writes. Keep `write_codex_live_atomic` available
-/// for exact restore/backup paths that must preserve the config text semantically as saved.
-pub fn write_codex_live_atomic_with_stable_provider(
-    auth: &Value,
-    config_text_opt: Option<&str>,
+pub fn restore_codex_settings_for_backfill(
+    settings: &mut Value,
+    template_settings: &Value,
+    restore_provider_token: bool,
 ) -> Result<(), AppError> {
-    write_codex_live_atomic_optional_auth_with_stable_provider(Some(auth), config_text_opt)
-}
-
-pub fn write_codex_live_atomic_optional_auth_with_stable_provider(
-    auth: Option<&Value>,
-    config_text_opt: Option<&str>,
-) -> Result<(), AppError> {
-    match config_text_opt {
-        Some(config_text) => {
-            let mut settings = serde_json::Map::new();
-            settings.insert("config".to_string(), Value::String(config_text.to_string()));
-            let mut settings = Value::Object(settings);
-            normalize_codex_settings_config_model_provider(&mut settings, None)?;
-            let config_text = settings
-                .get("config")
-                .and_then(|value| value.as_str())
-                .unwrap_or(config_text);
-            write_codex_live_atomic_optional_auth(auth, Some(config_text))
-        }
-        None => write_codex_live_atomic_optional_auth(auth, None),
+    if restore_provider_token {
+        restore_codex_provider_token_for_backfill(settings, template_settings)?;
     }
+    Ok(())
 }
 
 /// Generate a clean TOML key from a raw string for use as `model_provider` and `[model_providers.<key>]`.
@@ -661,286 +719,106 @@ mod tests {
     }
 
     #[test]
-    fn normalize_live_config_preserves_current_custom_model_provider_id() {
-        let current = r#"model_provider = "rightcode"
-
-[model_providers.rightcode]
-name = "RightCode"
-base_url = "https://rightcode.example/v1"
-wire_api = "responses"
-"#;
-        let target = r#"model_provider = "aihubmix"
-model = "gpt-5.4"
-
-[model_providers.aihubmix]
-name = "AiHubMix"
-base_url = "https://aihubmix.example/v1"
-wire_api = "responses"
-requires_openai_auth = true
-
-[mcp_servers.context7]
-command = "npx"
-"#;
-
-        let result =
-            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("rightcode")
-        );
-
-        let model_providers = parsed
-            .get("model_providers")
-            .and_then(|v| v.as_table())
-            .expect("model_providers should exist");
-        assert!(
-            model_providers.get("aihubmix").is_none(),
-            "source provider id should not remain in live config"
-        );
-
-        let stable_provider = model_providers
-            .get("rightcode")
-            .expect("stable provider table should exist");
-        assert_eq!(
-            stable_provider.get("base_url").and_then(|v| v.as_str()),
-            Some("https://aihubmix.example/v1")
-        );
-        assert!(
-            parsed.get("mcp_servers").is_some(),
-            "unrelated config should be preserved"
-        );
-    }
-
-    #[test]
-    fn normalize_live_config_uses_target_custom_provider_when_current_is_reserved() {
-        let current = r#"model_provider = "openai""#;
-        let target = r#"model_provider = "aihubmix"
-
-[model_providers.aihubmix]
-name = "AiHubMix"
-base_url = "https://aihubmix.example/v1"
-wire_api = "responses"
-"#;
-
-        let result =
-            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("aihubmix")
-        );
-        assert!(
-            parsed
-                .get("model_providers")
-                .and_then(|v| v.get("aihubmix"))
-                .is_some(),
-            "target provider id should be kept when there is no reusable live custom id"
-        );
-    }
-
-    #[test]
-    fn normalize_live_config_leaves_official_empty_config_unchanged() {
-        let current = r#"model_provider = "rightcode"
-
-[model_providers.rightcode]
-base_url = "https://rightcode.example/v1"
-"#;
-
-        let result =
-            normalize_codex_live_config_model_provider_with_anchors("", Some(current)).unwrap();
-
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn normalize_live_config_rewrites_matching_profile_model_provider_refs() {
-        let current = r#"model_provider = "session_anchor"
-
-[model_providers.session_anchor]
-name = "Session Anchor"
-base_url = "https://anchor.example/v1"
-wire_api = "responses"
-"#;
-        let target = r#"model_provider = "vendor_alpha"
-model = "gpt-5.4"
-profile = "work"
-
-[model_providers.vendor_alpha]
-name = "Vendor Alpha"
-base_url = "https://alpha.example/v1"
-wire_api = "responses"
-
-[profiles.work]
-model_provider = "vendor_alpha"
-model = "gpt-5.4"
-"#;
-
-        let result =
-            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("session_anchor")
-        );
-        assert_eq!(
-            parsed
-                .get("profiles")
-                .and_then(|v| v.get("work"))
-                .and_then(|v| v.get("model_provider"))
-                .and_then(|v| v.as_str()),
-            Some("session_anchor"),
-            "profile override matching the rewritten provider should stay valid"
-        );
-    }
-
-    #[test]
-    fn normalize_live_config_keeps_unrelated_profile_model_provider_refs() {
-        let current = r#"model_provider = "session_anchor"
-
-[model_providers.session_anchor]
-name = "Session Anchor"
-base_url = "https://anchor.example/v1"
-wire_api = "responses"
-"#;
-        let target = r#"model_provider = "vendor_alpha"
+    fn prepare_provider_live_config_writes_provider_scoped_bearer_token() {
+        let input = r#"model_provider = "vendor_alpha"
 model = "gpt-5.4"
 
 [model_providers.vendor_alpha]
 name = "Vendor Alpha"
 base_url = "https://alpha.example/v1"
 wire_api = "responses"
-
-[model_providers.local_profile]
-name = "Local Profile"
-base_url = "http://localhost:11434/v1"
-wire_api = "responses"
-
-[profiles.local]
-model_provider = "local_profile"
-model = "local-model"
 "#;
 
         let result =
-            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
+                .expect("prepare live config");
+        let parsed: toml::Value = toml::from_str(&result).expect("parse prepared config");
 
         assert_eq!(
             parsed
-                .get("profiles")
-                .and_then(|v| v.get("local"))
-                .and_then(|v| v.get("model_provider"))
-                .and_then(|v| v.as_str()),
-            Some("local_profile"),
-            "unrelated profile provider references should be preserved"
-        );
-        assert!(
-            parsed
                 .get("model_providers")
-                .and_then(|v| v.get("local_profile"))
-                .is_some(),
-            "unrelated provider tables should also remain available"
+                .and_then(|v| v.get("vendor_alpha"))
+                .and_then(|v| v.get("experimental_bearer_token"))
+                .and_then(|v| v.as_str()),
+            Some("sk-test")
+        );
+        assert_eq!(
+            extract_codex_experimental_bearer_token(&result).as_deref(),
+            Some("sk-test")
         );
     }
 
     #[test]
-    fn normalize_live_config_keeps_stable_provider_across_repeated_switches() {
-        let anchor = r#"model_provider = "session_anchor"
-
-[model_providers.session_anchor]
-name = "Session Anchor"
-base_url = "https://anchor.example/v1"
-wire_api = "responses"
-"#;
-        let first_target = r#"model_provider = "vendor_alpha"
+    fn restore_backfill_moves_bearer_token_back_to_auth() {
+        let mut live_settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "oauth-access"
+                }
+            },
+            "config": r#"model_provider = "vendor_alpha"
+model = "gpt-5.4"
 
 [model_providers.vendor_alpha]
 name = "Vendor Alpha"
 base_url = "https://alpha.example/v1"
 wire_api = "responses"
-"#;
-        let second_target = r#"model_provider = "vendor_beta"
-
-[model_providers.vendor_beta]
-name = "Vendor Beta"
-base_url = "https://beta.example/v1"
-wire_api = "responses"
-"#;
-
-        let first =
-            normalize_codex_live_config_model_provider_with_anchors(first_target, Some(anchor))
-                .unwrap();
-        let second = normalize_codex_live_config_model_provider_with_anchors(
-            second_target,
-            Some(first.as_str()),
-        )
-        .unwrap();
-        let parsed: toml::Value = toml::from_str(&second).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("session_anchor"),
-            "stable provider id should not drift across repeated switches"
-        );
-        assert_eq!(
-            parsed
-                .get("model_providers")
-                .and_then(|v| v.get("session_anchor"))
-                .and_then(|v| v.get("base_url"))
-                .and_then(|v| v.as_str()),
-            Some("https://beta.example/v1")
-        );
-    }
-
-    #[test]
-    fn restore_backfill_config_rewrites_live_id_to_template_provider_id() {
-        let mut settings = serde_json::json!({
-            "config": r#"model_provider = "session_anchor"
-model = "gpt-5.4"
-profile = "work"
-
-[model_providers.session_anchor]
-name = "AiHubMix"
-base_url = "https://aihubmix.example/v1"
-wire_api = "responses"
-
-[profiles.work]
-model_provider = "session_anchor"
-model = "gpt-5.4"
+experimental_bearer_token = "sk-live"
 "#
         });
-        let template = serde_json::json!({
-            "config": r#"model_provider = "aihubmix"
-
-[model_providers.aihubmix]
-name = "AiHubMix"
-base_url = "https://aihubmix.example/v1"
-"#
+        let template_settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-template"
+            }
         });
 
-        restore_codex_settings_config_model_provider_for_backfill(&mut settings, &template)
-            .unwrap();
-
-        let config = settings.get("config").and_then(Value::as_str).unwrap();
-        let parsed: toml::Value = toml::from_str(config).unwrap();
+        restore_codex_settings_for_backfill(&mut live_settings, &template_settings, true)
+            .expect("restore settings");
         assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("aihubmix")
+            live_settings
+                .get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(Value::as_str),
+            Some("sk-live")
         );
-        assert!(parsed
-            .get("model_providers")
-            .and_then(|v| v.get("aihubmix"))
-            .is_some());
-        assert_eq!(
-            parsed
-                .get("profiles")
-                .and_then(|v| v.get("work"))
-                .and_then(|v| v.get("model_provider"))
-                .and_then(|v| v.as_str()),
-            Some("aihubmix")
+        let config_text = live_settings
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+        assert!(
+            !config_text.contains("experimental_bearer_token"),
+            "stored provider config should not keep live bearer tokens"
+        );
+    }
+
+    #[test]
+    fn should_not_restore_provider_token_for_oauth_only_template() {
+        let oauth_template = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "oauth-access"
+                }
+            }
+        });
+        let api_key_template = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            }
+        });
+
+        assert!(
+            !should_restore_codex_provider_token_for_backfill(Some("custom"), &oauth_template),
+            "OAuth-only templates should not backfill bearer tokens into OPENAI_API_KEY"
+        );
+        assert!(
+            should_restore_codex_provider_token_for_backfill(Some("custom"), &api_key_template),
+            "custom API-key providers should still restore provider bearer tokens"
+        );
+        assert!(
+            !should_restore_codex_provider_token_for_backfill(Some("official"), &api_key_template),
+            "official providers should never restore third-party bearer tokens"
         );
     }
 }
