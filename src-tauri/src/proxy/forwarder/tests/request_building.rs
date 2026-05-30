@@ -195,6 +195,49 @@ async fn claude_prepare_request_sets_defaults_and_filters_blocked_caller_headers
     headers.insert("accept-encoding", HeaderValue::from_static("gzip"));
     headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
     headers.insert("x-real-ip", HeaderValue::from_static("203.0.113.11"));
+    headers.insert(
+        "x-forwarded-host",
+        HeaderValue::from_static("client.example"),
+    );
+    headers.insert("x-forwarded-port", HeaderValue::from_static("443"));
+    headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+    headers.insert(
+        "forwarded",
+        HeaderValue::from_static("for=203.0.113.10;proto=https"),
+    );
+    headers.insert("cf-connecting-ip", HeaderValue::from_static("203.0.113.12"));
+    headers.insert("cf-ipcountry", HeaderValue::from_static("US"));
+    headers.insert("cf-ray", HeaderValue::from_static("ray-id"));
+    headers.insert(
+        "cf-visitor",
+        HeaderValue::from_static("{\"scheme\":\"https\"}"),
+    );
+    headers.insert("true-client-ip", HeaderValue::from_static("203.0.113.13"));
+    headers.insert("fastly-client-ip", HeaderValue::from_static("203.0.113.14"));
+    headers.insert("x-azure-clientip", HeaderValue::from_static("203.0.113.15"));
+    headers.insert("x-azure-fdid", HeaderValue::from_static("fdid"));
+    headers.insert("x-azure-ref", HeaderValue::from_static("ref"));
+    headers.insert("akamai-origin-hop", HeaderValue::from_static("1"));
+    headers.insert(
+        "x-akamai-config-log-detail",
+        HeaderValue::from_static("detail"),
+    );
+    headers.insert("x-request-id", HeaderValue::from_static("request-id"));
+    headers.insert(
+        "x-correlation-id",
+        HeaderValue::from_static("correlation-id"),
+    );
+    headers.insert("x-trace-id", HeaderValue::from_static("trace-id"));
+    headers.insert("x-amzn-trace-id", HeaderValue::from_static("amzn-trace-id"));
+    headers.insert("x-b3-traceid", HeaderValue::from_static("b3-trace"));
+    headers.insert("x-b3-spanid", HeaderValue::from_static("b3-span"));
+    headers.insert("x-b3-parentspanid", HeaderValue::from_static("b3-parent"));
+    headers.insert("x-b3-sampled", HeaderValue::from_static("1"));
+    headers.insert(
+        "traceparent",
+        HeaderValue::from_static("00-00000000000000000000000000000000-0000000000000000-01"),
+    );
+    headers.insert("tracestate", HeaderValue::from_static("vendor=value"));
 
     let request = build_request(
         &AppType::Claude,
@@ -223,6 +266,31 @@ async fn claude_prepare_request_sets_defaults_and_filters_blocked_caller_headers
         Some("203.0.113.10")
     );
     assert_eq!(header_value(&request, "x-real-ip"), Some("203.0.113.11"));
+    assert_eq!(header_value(&request, "x-forwarded-host"), None);
+    assert_eq!(header_value(&request, "x-forwarded-port"), None);
+    assert_eq!(header_value(&request, "x-forwarded-proto"), None);
+    assert_eq!(header_value(&request, "forwarded"), None);
+    assert_eq!(header_value(&request, "cf-connecting-ip"), None);
+    assert_eq!(header_value(&request, "cf-ipcountry"), None);
+    assert_eq!(header_value(&request, "cf-ray"), None);
+    assert_eq!(header_value(&request, "cf-visitor"), None);
+    assert_eq!(header_value(&request, "true-client-ip"), None);
+    assert_eq!(header_value(&request, "fastly-client-ip"), None);
+    assert_eq!(header_value(&request, "x-azure-clientip"), None);
+    assert_eq!(header_value(&request, "x-azure-fdid"), None);
+    assert_eq!(header_value(&request, "x-azure-ref"), None);
+    assert_eq!(header_value(&request, "akamai-origin-hop"), None);
+    assert_eq!(header_value(&request, "x-akamai-config-log-detail"), None);
+    assert_eq!(header_value(&request, "x-request-id"), None);
+    assert_eq!(header_value(&request, "x-correlation-id"), None);
+    assert_eq!(header_value(&request, "x-trace-id"), None);
+    assert_eq!(header_value(&request, "x-amzn-trace-id"), None);
+    assert_eq!(header_value(&request, "x-b3-traceid"), None);
+    assert_eq!(header_value(&request, "x-b3-spanid"), None);
+    assert_eq!(header_value(&request, "x-b3-parentspanid"), None);
+    assert_eq!(header_value(&request, "x-b3-sampled"), None);
+    assert_eq!(header_value(&request, "traceparent"), None);
+    assert_eq!(header_value(&request, "tracestate"), None);
 }
 
 #[tokio::test]
@@ -470,6 +538,88 @@ async fn codex_oauth_prepare_request_errors_without_available_account() {
     assert!(
         error.to_string().contains("Codex OAuth 认证失败"),
         "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn codex_oauth_prepare_request_rejects_proxy_managed_placeholder_header() {
+    let _lock = lock_test_home_and_settings();
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let _guard = ConfigDirEnvGuard::set(Some(temp.path().to_string_lossy().as_ref()));
+    CodexOAuthService::reset_for_tests();
+    CodexOAuthService::seed_account_for_tests(
+        "acc-placeholder",
+        "rt-placeholder",
+        Some("placeholder@example.com"),
+        Some("at-placeholder"),
+        None,
+    )
+    .await
+    .expect("seed placeholder account");
+
+    let (_db, router) = test_router().await;
+    let forwarder = RequestForwarder::new(router).expect("create forwarder");
+    let provider = codex_oauth_provider(Some("acc-placeholder"));
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-extra-auth",
+        HeaderValue::from_static("Bearer PROXY_MANAGED"),
+    );
+
+    let error = forwarder
+        .prepare_request(
+            &AppType::Claude,
+            &provider,
+            "/v1/messages",
+            &claude_request_body(),
+            &headers,
+            ForwardOptions {
+                max_retries: 0,
+                request_timeout: Some(Duration::from_secs(2)),
+                bypass_circuit_breaker: true,
+            },
+        )
+        .await
+        .expect_err("managed upstream placeholder should be rejected before send");
+
+    assert!(
+        error.to_string().contains("PROXY_MANAGED"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn non_managed_upstream_allows_proxy_managed_placeholder_guard() {
+    let (_db, router) = test_router().await;
+    let forwarder = RequestForwarder::new(router).expect("create forwarder");
+    let provider = codex_provider("https://example.com");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-extra-auth",
+        HeaderValue::from_static("Bearer PROXY_MANAGED"),
+    );
+
+    let request = forwarder
+        .prepare_request(
+            &AppType::Codex,
+            &provider,
+            "/v1/responses",
+            &json!({"model": "gpt-5.4", "input": "hello"}),
+            &headers,
+            ForwardOptions {
+                max_retries: 0,
+                request_timeout: Some(Duration::from_secs(2)),
+                bypass_circuit_breaker: true,
+            },
+        )
+        .await
+        .expect("non-managed upstream should not reject placeholder-like caller header")
+        .build()
+        .expect("build request");
+
+    assert_eq!(
+        header_value(&request, "x-extra-auth"),
+        Some("Bearer PROXY_MANAGED")
     );
 }
 

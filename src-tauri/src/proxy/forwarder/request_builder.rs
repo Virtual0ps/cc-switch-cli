@@ -18,6 +18,8 @@ use super::super::{
 };
 use super::{ForwardOptions, RequestForwarder};
 
+const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
 const HEADER_BLACKLIST: &[&str] = &[
     "authorization",
     "x-api-key",
@@ -30,6 +32,31 @@ const HEADER_BLACKLIST: &[&str] = &[
     "anthropic-version",
     "x-forwarded-for",
     "x-real-ip",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+    "forwarded",
+    "cf-connecting-ip",
+    "cf-ipcountry",
+    "cf-ray",
+    "cf-visitor",
+    "true-client-ip",
+    "fastly-client-ip",
+    "x-azure-clientip",
+    "x-azure-fdid",
+    "x-azure-ref",
+    "akamai-origin-hop",
+    "x-akamai-config-log-detail",
+    "x-request-id",
+    "x-correlation-id",
+    "x-trace-id",
+    "x-amzn-trace-id",
+    "x-b3-traceid",
+    "x-b3-spanid",
+    "x-b3-parentspanid",
+    "x-b3-sampled",
+    "traceparent",
+    "tracestate",
 ];
 
 impl RequestForwarder {
@@ -246,6 +273,7 @@ async fn build_request(
         request = request.header("anthropic-version", version);
     }
 
+    reject_proxy_placeholder_for_managed_account_upstream(&request)?;
     Ok(request.json(request_body))
 }
 
@@ -274,6 +302,47 @@ fn append_query_to_url(url: &str, query: Option<&str>) -> String {
     } else {
         format!("{url}?{query}")
     }
+}
+
+fn reject_proxy_placeholder_for_managed_account_upstream(
+    request: &reqwest::RequestBuilder,
+) -> Result<(), ProxyError> {
+    let Some(cloned_request) = request.try_clone() else {
+        return Ok(());
+    };
+    let built_request = cloned_request.build().map_err(|error| {
+        ProxyError::RequestFailed(format!("build upstream request failed: {error}"))
+    })?;
+
+    if !is_managed_account_upstream_url(built_request.url())
+        || !headers_contain_proxy_placeholder(built_request.headers())
+    {
+        return Ok(());
+    }
+
+    Err(ProxyError::AuthError(
+        "Managed account proxy auth was not resolved; PROXY_MANAGED must not be sent upstream"
+            .to_string(),
+    ))
+}
+
+fn is_managed_account_upstream_url(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+
+    host == "githubcopilot.com"
+        || host.ends_with(".githubcopilot.com")
+        || (host == "chatgpt.com" && url.path().starts_with("/backend-api/codex"))
+}
+
+fn headers_contain_proxy_placeholder(headers: &reqwest::header::HeaderMap) -> bool {
+    headers.values().any(|value| {
+        value
+            .to_str()
+            .map(|value| value.contains(PROXY_AUTH_PLACEHOLDER))
+            .unwrap_or(false)
+    })
 }
 
 fn is_streaming_request(endpoint: &str, body: &Value, headers: &HeaderMap) -> bool {
